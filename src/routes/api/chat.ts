@@ -43,7 +43,7 @@ ${body.companyContext ? `COMPANY CONTEXT HE'S BUILDING:\n${body.companyContext.s
         const result = streamText({
           model: gateway("google/gemini-3.6-flash"),
           system: sys,
-          messages: convertToModelMessages(body.messages),
+          messages: await convertToModelMessages(body.messages),
         });
 
         return result.toUIMessageStreamResponse();

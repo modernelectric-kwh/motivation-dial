@@ -1,6 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { store } from "@/lib/store";
+import { checkSyncStatus } from "@/lib/enrichment.functions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -25,12 +27,19 @@ function Index() {
   const [idx, setIdx] = useState(0);
   const [hasContext, setHasContext] = useState(false);
   const [hasNotion, setHasNotion] = useState(false);
+  const [sync, setSync] = useState<{ notion: boolean; gcal: boolean; gmail: boolean }>({
+    notion: false,
+    gcal: false,
+    gmail: false,
+  });
+  const checkFn = useServerFn(checkSyncStatus);
 
   useEffect(() => {
     setCount(store.getContacts().length);
     setIdx(store.getQueueIdx());
     setHasContext(!!store.getCompanyMd());
     setHasNotion(!!store.getNotionDb());
+    checkFn().then(setSync).catch(() => undefined);
   }, []);
 
   const remaining = Math.max(count - idx, 0);
@@ -80,6 +89,27 @@ function Index() {
         <StatusPill label="Contacts" ok={count > 0} value={count > 0 ? String(count) : "0"} />
         <StatusPill label="Context" ok={hasContext} value={hasContext ? "loaded" : "empty"} />
         <StatusPill label="Notion" ok={hasNotion} value={hasNotion ? "linked" : "off"} />
+      </div>
+
+      <div className="mx-auto mt-3 grid max-w-md grid-cols-3 gap-3 px-6">
+        <StatusPill label="gCal" ok={sync.gcal} value={sync.gcal ? "linked" : "off"} />
+        <StatusPill label="Gmail" ok={sync.gmail} value={sync.gmail ? "linked" : "off"} />
+        <StatusPill label="API" ok={sync.notion || sync.gcal || sync.gmail} value={sync.notion ? "ok" : "—"} />
+      </div>
+
+      <div className="mx-auto mt-8 flex max-w-md gap-3 px-6 pb-10">
+        <Link
+          to="/queue"
+          className="flex-1 rounded-2xl border border-border bg-card px-4 py-3 text-center text-sm font-medium"
+        >
+          Queue
+        </Link>
+        <Link
+          to="/motivation"
+          className="flex-1 rounded-2xl border border-accent/40 bg-gradient-to-br from-accent/10 to-primary/5 px-4 py-3 text-center text-sm font-medium text-accent"
+        >
+          Motivation
+        </Link>
       </div>
     </div>
   );

@@ -1,7 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { parseVCF, type Contact } from "@/lib/vcf";
 import { store } from "@/lib/store";
+import { checkSyncStatus } from "@/lib/enrichment.functions";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -22,12 +24,15 @@ function Settings() {
   const [companyMd, setCompanyMd] = useState("");
   const [notionDb, setNotionDb] = useState("");
   const [motivation, setMotivation] = useState("");
+  const [sync, setSync] = useState<{ notion: boolean; gcal: boolean; gmail: boolean } | null>(null);
+  const checkFn = useServerFn(checkSyncStatus);
 
   useEffect(() => {
     setContacts(store.getContacts());
     setCompanyMd(store.getCompanyMd());
     setNotionDb(store.getNotionDb());
     setMotivation(store.getMotivation());
+    checkFn().then(setSync).catch(() => setSync({ notion: false, gcal: false, gmail: false }));
   }, []);
 
   const onVcf = async (f: File) => {
@@ -123,12 +128,35 @@ function Settings() {
           />
         </Section>
 
-        <Section label="Other syncs" sub="iPhone calls · iMessage · WhatsApp · gCal · Gmail">
+        <Section label="Google sync" sub="Calendar + Gmail feed into each contact's timeline">
+          <div className="grid grid-cols-2 gap-2">
+            <StatusChip label="Calendar" ok={!!sync?.gcal} />
+            <StatusChip label="Gmail" ok={!!sync?.gmail} />
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Both connect via your builder account (single-user mode). Events + email threads with each contact appear on the call screen.
+          </p>
+        </Section>
+
+        <Section label="iPhone-only signals" sub="iMessage · WhatsApp · native call history">
           <p className="rounded-lg border border-dashed border-border bg-card/40 p-3 text-xs text-muted-foreground">
-            iOS blocks web apps from reading iMessage/WhatsApp/native call history. gCal + Gmail can be wired later via a per-user Google connector — say the word and I'll add it.
+            Apple doesn't let web apps read these directly. Tap iMessage/WhatsApp on the call screen to open the native thread — POST-call notes capture what you talked about.
           </p>
         </Section>
       </div>
+    </div>
+  );
+}
+
+function StatusChip({ label, ok }: { label: string; ok: boolean }) {
+  return (
+    <div
+      className={`flex items-center justify-between rounded-lg border px-3 py-2 text-xs ${
+        ok ? "border-primary/40 bg-primary/5 text-primary" : "border-border text-muted-foreground"
+      }`}
+    >
+      <span>{label}</span>
+      <span className={`h-2 w-2 rounded-full ${ok ? "bg-primary" : "bg-muted-foreground/40"}`} />
     </div>
   );
 }

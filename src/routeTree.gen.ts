@@ -10,12 +10,25 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as QueueRouteImport } from './routes/queue'
+import { Route as MotivationRouteImport } from './routes/motivation'
 import { Route as CallRouteImport } from './routes/call'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiChatRouteImport } from './routes/api/chat'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const QueueRoute = QueueRouteImport.update({
+  id: '/queue',
+  path: '/queue',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MotivationRoute = MotivationRouteImport.update({
+  id: '/motivation',
+  path: '/motivation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CallRoute = CallRouteImport.update({
@@ -28,35 +41,65 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiChatRoute = ApiChatRouteImport.update({
+  id: '/api/chat',
+  path: '/api/chat',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/call': typeof CallRoute
+  '/motivation': typeof MotivationRoute
+  '/queue': typeof QueueRoute
   '/settings': typeof SettingsRoute
+  '/api/chat': typeof ApiChatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/call': typeof CallRoute
+  '/motivation': typeof MotivationRoute
+  '/queue': typeof QueueRoute
   '/settings': typeof SettingsRoute
+  '/api/chat': typeof ApiChatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/call': typeof CallRoute
+  '/motivation': typeof MotivationRoute
+  '/queue': typeof QueueRoute
   '/settings': typeof SettingsRoute
+  '/api/chat': typeof ApiChatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/call' | '/settings'
+  fullPaths:
+    | '/'
+    | '/call'
+    | '/motivation'
+    | '/queue'
+    | '/settings'
+    | '/api/chat'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/call' | '/settings'
-  id: '__root__' | '/' | '/call' | '/settings'
+  to: '/' | '/call' | '/motivation' | '/queue' | '/settings' | '/api/chat'
+  id:
+    | '__root__'
+    | '/'
+    | '/call'
+    | '/motivation'
+    | '/queue'
+    | '/settings'
+    | '/api/chat'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CallRoute: typeof CallRoute
+  MotivationRoute: typeof MotivationRoute
+  QueueRoute: typeof QueueRoute
   SettingsRoute: typeof SettingsRoute
+  ApiChatRoute: typeof ApiChatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -66,6 +109,20 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/queue': {
+      id: '/queue'
+      path: '/queue'
+      fullPath: '/queue'
+      preLoaderRoute: typeof QueueRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/motivation': {
+      id: '/motivation'
+      path: '/motivation'
+      fullPath: '/motivation'
+      preLoaderRoute: typeof MotivationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/call': {
@@ -82,13 +139,23 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/chat': {
+      id: '/api/chat'
+      path: '/api/chat'
+      fullPath: '/api/chat'
+      preLoaderRoute: typeof ApiChatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CallRoute: CallRoute,
+  MotivationRoute: MotivationRoute,
+  QueueRoute: QueueRoute,
   SettingsRoute: SettingsRoute,
+  ApiChatRoute: ApiChatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

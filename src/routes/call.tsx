@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { store, type CallLog } from "@/lib/store";
 import { generateCallPrep, logToNotion } from "@/lib/ai.functions";
+import { fetchEnrichedTimeline, type TimelineEntry } from "@/lib/enrichment.functions";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 
@@ -32,6 +33,11 @@ function CallScreen() {
 
   const genPrep = useServerFn(generateCallPrep);
   const sendNotion = useServerFn(logToNotion);
+  const fetchTimeline = useServerFn(fetchEnrichedTimeline);
+
+  const [remote, setRemote] = useState<TimelineEntry[]>([]);
+  const [remoteErrors, setRemoteErrors] = useState<Record<string, string>>({});
+  const [remoteLoading, setRemoteLoading] = useState(false);
 
   const history = useMemo(
     () => (contact ? store.historyFor(contact.id) : []),
@@ -45,6 +51,22 @@ function CallScreen() {
     setNotes("");
     setOutcome("connected");
     setLoading(true);
+    setRemote([]);
+    setRemoteErrors({});
+    setRemoteLoading(true);
+    fetchTimeline({
+      data: {
+        name: contact.name,
+        email: contact.email,
+        notionDb: store.getNotionDb() || undefined,
+      },
+    })
+      .then((r) => {
+        setRemote(r.entries);
+        setRemoteErrors(r.errors);
+      })
+      .catch(() => undefined)
+      .finally(() => setRemoteLoading(false));
     genPrep({
       data: {
         contactName: contact.name,
@@ -195,20 +217,15 @@ function CallScreen() {
 
         {/* Timeline */}
         <div className="rounded-2xl border border-border bg-card p-5">
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Timeline</p>
-          {history.length === 0 ? (
-            <p className="mt-2 text-sm text-muted-foreground">First contact — no prior touchpoints.</p>
-          ) : (
-            <ol className="mt-3 space-y-3">
-              {history.slice(0, 5).map((h, i) => (
-                <li key={i} className="border-l-2 border-primary/60 pl-3">
-                  <p className="text-xs text-muted-foreground">
-                    {new Date(h.at).toLocaleString()} · {h.outcome}
-                  </p>
-                  <p className="mt-1 text-sm">{h.notes || <span className="text-muted-foreground">no notes</span>}</p>
-                </li>
-              ))}
-            </ol>
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Timeline</p>
+            {remoteLoading && <span className="text-xs text-muted-foreground">syncing…</span>}
+          </div>
+          <Timeline localLogs={history} remote={remote} />
+          {Object.keys(remoteErrors).length > 0 && (
+            <p className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+              Sync issues: {Object.entries(remoteErrors).map(([k, v]) => `${k}: ${v}`).join(" · ")}
+            </p>
           )}
         </div>
 
@@ -279,5 +296,77 @@ function ActionBtn({
     >
       {label}
     </a>
+  );
+}
+
+function Timeline({
+  localLogs,
+  remote,
+}: {
+  localLogs: CallLog[];
+  remote: TimelineEntry[];
+}) {
+  const combined: Array<{
+    key: string;
+    at: string;
+    source: string;
+    title: string;
+    snippet?: string;
+    url?: string;
+  }> = [
+    ...localLogs.map((h, i) => ({
+      key: `l-${i}`,
+      at: h.at,
+      source: "call",
+      title: `Call · ${h.outcome}`,
+      snippet: h.notes,
+    })),
+    ...remote.map((r, i) => ({
+      key: `r-${i}`,
+      at: r.at,
+      source: r.source,
+      title: r.title,
+      snippet: r.snippet,
+      url: r.url,
+    })),
+  ].sort((a, b) => (b.at > a.at ? 1 : -1));
+
+  if (combined.length === 0) {
+    return <p className="mt-2 text-sm text-muted-foreground">First contact — no prior touchpoints.</p>;
+  }
+
+  const badgeColor = (s: string) =>
+    ({
+      call: "border-primary/60 text-primary",
+      notion: "border-accent/60 text-accent",
+      gcal: "border-chart-2/60 text-chart-2",
+      gmail: "border-chart-4/60 text-chart-4",
+    })[s] ?? "border-border text-muted-foreground";
+
+  return (
+    <ol className="mt-3 space-y-3">
+      {combined.slice(0, 8).map((e) => (
+        <li key={e.key} className="border-l-2 border-primary/40 pl-3">
+          <div className="flex items-center gap-2">
+            <span
+              className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider ${badgeColor(e.source)}`}
+            >
+              {e.source}
+            </span>
+            <p className="text-xs text-muted-foreground">{new Date(e.at).toLocaleString()}</p>
+          </div>
+          <p className="mt-1 text-sm font-medium">
+            {e.url ? (
+              <a href={e.url} target="_blank" rel="noreferrer" className="underline decoration-dotted underline-offset-2">
+                {e.title}
+              </a>
+            ) : (
+              e.title
+            )}
+          </p>
+          {e.snippet && <p className="text-xs text-muted-foreground">{e.snippet}</p>}
+        </li>
+      ))}
+    </ol>
   );
 }
