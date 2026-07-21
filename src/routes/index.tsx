@@ -105,6 +105,12 @@ function Index() {
           Queue
         </Link>
         <Link
+          to="/features"
+          className="flex-1 rounded-2xl border border-border bg-card px-4 py-3 text-center text-sm font-medium"
+        >
+          Stats
+        </Link>
+        <Link
           to="/motivation"
           className="flex-1 rounded-2xl border border-accent/40 bg-gradient-to-br from-accent/10 to-primary/5 px-4 py-3 text-center text-sm font-medium text-accent"
         >

@@ -1,9 +1,15 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { store, type CallLog } from "@/lib/store";
 import { generateCallPrep, logToNotion } from "@/lib/ai.functions";
 import { fetchEnrichedTimeline, type TimelineEntry } from "@/lib/enrichment.functions";
+import {
+  sendCalendarPlaceholder,
+  queryPerplexityContext,
+  draftFollowupEmail,
+} from "@/lib/followup.functions";
+import { loadVoicemailBlob } from "@/lib/vm-storage";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 
@@ -21,7 +27,10 @@ export const Route = createFileRoute("/call")({
 
 function CallScreen() {
   const router = useRouter();
-  const contacts = useMemo(() => store.getContacts(), []);
+  const contacts = useMemo(
+    () => store.getContacts().filter((c) => !c.phone || !store.getDNC().includes(c.phone)),
+    [],
+  );
   const [idx, setIdx] = useState(() => store.getQueueIdx());
   const contact = contacts[idx];
 
@@ -34,10 +43,17 @@ function CallScreen() {
   const genPrep = useServerFn(generateCallPrep);
   const sendNotion = useServerFn(logToNotion);
   const fetchTimeline = useServerFn(fetchEnrichedTimeline);
+  const sendPlaceholderFn = useServerFn(sendCalendarPlaceholder);
+  const perplexityFn = useServerFn(queryPerplexityContext);
+  const draftEmailFn = useServerFn(draftFollowupEmail);
 
   const [remote, setRemote] = useState<TimelineEntry[]>([]);
   const [remoteErrors, setRemoteErrors] = useState<Record<string, string>>({});
   const [remoteLoading, setRemoteLoading] = useState(false);
+  const [perplex, setPerplex] = useState<{ brief: string; citations: string[] } | null>(null);
+  const [vmPlaying, setVmPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [busy, setBusy] = useState<null | "placeholder" | "vm" | "email">(null);
 
   const history = useMemo(
     () => (contact ? store.historyFor(contact.id) : []),
@@ -54,6 +70,7 @@ function CallScreen() {
     setRemote([]);
     setRemoteErrors({});
     setRemoteLoading(true);
+    setPerplex(null);
     fetchTimeline({
       data: {
         name: contact.name,
@@ -67,6 +84,16 @@ function CallScreen() {
       })
       .catch(() => undefined)
       .finally(() => setRemoteLoading(false));
+    // fire Perplexity brief in parallel (best-effort)
+    perplexityFn({ data: { name: contact.name, org: contact.org } })
+      .then(setPerplex)
+      .catch(() => undefined);
+    // Compose chat context digest for the pitch model
+    const chatBits: string[] = [];
+    const cg = store.getChatgpt();
+    const cl = store.getClaude();
+    if (cg) chatBits.push(`— ChatGPT (${cg.entryCount} chats) —\n${cg.digest}`);
+    if (cl) chatBits.push(`— Claude (${cl.entryCount} chats) —\n${cl.digest}`);
     genPrep({
       data: {
         contactName: contact.name,
@@ -74,6 +101,7 @@ function CallScreen() {
         companyContext: store.getCompanyMd(),
         motivationSeed: store.getMotivation(),
         lastNotes: history[0]?.notes,
+        chatContext: chatBits.join("\n\n") || undefined,
       },
     })
       .then((r) => {
@@ -159,6 +187,107 @@ function CallScreen() {
     router.invalidate();
   };
 
+  // ---------- FOLLOW-UP ACTIONS ----------
+  const first = contact.name.split(/\s+/)[0] || contact.name;
+
+  const sendPlaceholder = async () => {
+    if (!contact.email) {
+      toast.error("No email on this contact — can't send an invite.");
+      return;
+    }
+    setBusy("placeholder");
+    try {
+      const r = await sendPlaceholderFn({
+        data: { firstName: first, email: contact.email },
+      });
+      toast.success(`Placeholder sent · ${new Date(r.slot).toLocaleString([], { weekday: "short", hour: "numeric" })}`);
+      const cal = store.getCalCom();
+      const msg = `Hey! I sent you a placeholder to catch up. Does it work?\n\nFeel free to decline if not. 1p or 2p PT works tomorrow or we can use this ${cal}`;
+      if (contact.phone) {
+        const smsUrl = `sms:${contact.phone}${/iPhone|iPad|iPod|Mac/.test(navigator.userAgent) ? "&" : "?"}body=${encodeURIComponent(msg)}`;
+        window.location.href = smsUrl;
+      }
+    } catch (e) {
+      toast.error("Placeholder failed", { description: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const dropVm = async () => {
+    if (!contact.phone) return toast.error("No phone number");
+    setBusy("vm");
+    try {
+      const blob = await loadVoicemailBlob();
+      if (!blob) {
+        toast.error("Record a voicemail in Settings first");
+        setBusy(null);
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        setVmPlaying(false);
+        setBusy(null);
+      };
+      // Prompt user to enable speaker, then dial
+      const proceed = window.confirm(
+        "Set iPhone to SPEAKER before answering the call prompt. Recording will play automatically. Tap OK to dial.",
+      );
+      if (!proceed) {
+        setBusy(null);
+        return;
+      }
+      setVmPlaying(true);
+      // Small delay to give iOS time to switch to the tel: sheet
+      setTimeout(() => audio.play().catch(() => undefined), 400);
+      window.location.href = `tel:${contact.phone}`;
+      // Auto-log a voicemail-dropped outcome
+      setOutcome("voicemail-dropped");
+    } catch (e) {
+      toast.error("VM drop failed", { description: (e as Error).message });
+      setBusy(null);
+    }
+  };
+
+  const stopVm = () => {
+    audioRef.current?.pause();
+    audioRef.current = null;
+    setVmPlaying(false);
+    setBusy(null);
+  };
+
+  const draftEmail = async () => {
+    if (!contact.email) return toast.error("No email on this contact");
+    setBusy("email");
+    try {
+      await draftEmailFn({
+        data: {
+          to: contact.email,
+          firstName: first,
+          subject: `${first} <> Chino — follow-up`,
+          template: store.getFollowupTemplate(),
+          notes,
+        },
+      });
+      toast.success("Draft in your Gmail");
+    } catch (e) {
+      toast.error("Draft failed", { description: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const addDNC = () => {
+    if (contact.phone) {
+      store.addDNC(contact.phone);
+      toast.success("Added to DNC — skipping.");
+      advance();
+    }
+  };
+
   const tel = contact.phone ? `tel:${contact.phone}` : undefined;
   const sms = contact.phone ? `sms:${contact.phone}` : undefined;
   const wa = contact.phone ? `https://wa.me/${contact.phone.replace(/^\+/, "")}` : undefined;
@@ -172,9 +301,10 @@ function CallScreen() {
           <span className="uppercase tracking-[0.2em]">
             {idx + 1} / {contacts.length}
           </span>
-          <button onClick={advance} className="text-muted-foreground">
-            Skip →
-          </button>
+          <div className="flex gap-3">
+            <button onClick={addDNC} className="text-destructive/80">DNC</button>
+            <button onClick={advance} className="text-muted-foreground">Skip →</button>
+          </div>
         </div>
       </header>
 
@@ -191,6 +321,51 @@ function CallScreen() {
             <ActionBtn href={sms} label="iMessage" />
             <ActionBtn href={wa} label="WhatsApp" external />
           </div>
+        </div>
+
+        {/* Follow-up trio */}
+        <div className="rounded-2xl border border-border bg-card p-5">
+          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Follow-up actions</p>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <FollowBtn
+              onClick={sendPlaceholder}
+              disabled={busy !== null || !contact.email}
+              busy={busy === "placeholder"}
+              label="Send placeholder"
+              sub="cal + iMsg"
+            />
+            {!vmPlaying ? (
+              <FollowBtn
+                onClick={dropVm}
+                disabled={busy !== null || !contact.phone}
+                busy={busy === "vm"}
+                label="Drop VM"
+                sub="speaker on"
+                accent
+              />
+            ) : (
+              <FollowBtn
+                onClick={stopVm}
+                disabled={false}
+                busy={false}
+                label="■ Stop VM"
+                sub="playing"
+                accent
+              />
+            )}
+            <FollowBtn
+              onClick={draftEmail}
+              disabled={busy !== null || !contact.email}
+              busy={busy === "email"}
+              label="Draft email"
+              sub="→ Gmail"
+            />
+          </div>
+          {!contact.email && (
+            <p className="mt-2 text-[10px] text-muted-foreground">
+              Placeholder + Draft need an email on the contact.
+            </p>
+          )}
         </div>
 
         {/* Motivation */}
@@ -215,6 +390,23 @@ function CallScreen() {
           )}
         </div>
 
+        {/* Perplexity brief */}
+        {perplex && (
+          <div className="rounded-2xl border border-chart-2/40 bg-chart-2/5 p-5">
+            <p className="text-xs uppercase tracking-[0.2em] text-chart-2">Perplexity brief</p>
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{perplex.brief}</p>
+            {perplex.citations.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {perplex.citations.slice(0, 4).map((c, i) => (
+                  <a key={i} href={c} target="_blank" rel="noreferrer" className="rounded-full border border-chart-2/40 px-2 py-0.5 text-[10px] text-chart-2">
+                    [{i + 1}]
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Timeline */}
         <div className="rounded-2xl border border-border bg-card p-5">
           <div className="flex items-center justify-between">
@@ -233,11 +425,22 @@ function CallScreen() {
         <div className="rounded-2xl border border-border bg-card p-5">
           <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">After the call</p>
           <div className="mt-3 grid grid-cols-4 gap-2">
-            {(["connected", "no-answer", "voicemail", "skipped"] as const).map((o) => (
+            {(
+              [
+                "connected",
+                "callback",
+                "voicemail",
+                "voicemail-dropped",
+                "no-answer",
+                "not-interested",
+                "wrong-number",
+                "skipped",
+              ] as const
+            ).map((o) => (
               <button
                 key={o}
                 onClick={() => setOutcome(o)}
-                className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+                className={`rounded-lg border px-2 py-2 text-[10px] font-medium transition-colors ${
                   outcome === o
                     ? "border-primary bg-primary/20 text-primary"
                     : "border-border text-muted-foreground"
@@ -263,6 +466,37 @@ function CallScreen() {
         </div>
       </div>
     </div>
+  );
+}
+
+function FollowBtn({
+  onClick,
+  disabled,
+  busy,
+  label,
+  sub,
+  accent,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  busy: boolean;
+  label: string;
+  sub: string;
+  accent?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex flex-col items-center justify-center rounded-lg border px-2 py-3 text-xs font-medium transition-all active:scale-95 disabled:opacity-30 ${
+        accent
+          ? "border-accent/60 bg-accent/10 text-accent"
+          : "border-border bg-input/30 text-foreground"
+      }`}
+    >
+      <span className="leading-tight">{busy ? "…" : label}</span>
+      <span className="mt-0.5 text-[9px] uppercase tracking-wider opacity-60">{sub}</span>
+    </button>
   );
 }
 
