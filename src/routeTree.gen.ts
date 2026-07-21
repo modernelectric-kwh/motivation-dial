@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as QueueRouteImport } from './routes/queue'
 import { Route as MotivationRouteImport } from './routes/motivation'
+import { Route as FeaturesRouteImport } from './routes/features'
 import { Route as CallRouteImport } from './routes/call'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
@@ -29,6 +30,11 @@ const QueueRoute = QueueRouteImport.update({
 const MotivationRoute = MotivationRouteImport.update({
   id: '/motivation',
   path: '/motivation',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FeaturesRoute = FeaturesRouteImport.update({
+  id: '/features',
+  path: '/features',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CallRoute = CallRouteImport.update({
@@ -50,6 +56,7 @@ const ApiChatRoute = ApiChatRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/call': typeof CallRoute
+  '/features': typeof FeaturesRoute
   '/motivation': typeof MotivationRoute
   '/queue': typeof QueueRoute
   '/settings': typeof SettingsRoute
@@ -58,6 +65,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/call': typeof CallRoute
+  '/features': typeof FeaturesRoute
   '/motivation': typeof MotivationRoute
   '/queue': typeof QueueRoute
   '/settings': typeof SettingsRoute
@@ -67,6 +75,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/call': typeof CallRoute
+  '/features': typeof FeaturesRoute
   '/motivation': typeof MotivationRoute
   '/queue': typeof QueueRoute
   '/settings': typeof SettingsRoute
@@ -77,16 +86,25 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/call'
+    | '/features'
     | '/motivation'
     | '/queue'
     | '/settings'
     | '/api/chat'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/call' | '/motivation' | '/queue' | '/settings' | '/api/chat'
+  to:
+    | '/'
+    | '/call'
+    | '/features'
+    | '/motivation'
+    | '/queue'
+    | '/settings'
+    | '/api/chat'
   id:
     | '__root__'
     | '/'
     | '/call'
+    | '/features'
     | '/motivation'
     | '/queue'
     | '/settings'
@@ -96,6 +114,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CallRoute: typeof CallRoute
+  FeaturesRoute: typeof FeaturesRoute
   MotivationRoute: typeof MotivationRoute
   QueueRoute: typeof QueueRoute
   SettingsRoute: typeof SettingsRoute
@@ -125,6 +144,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MotivationRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/features': {
+      id: '/features'
+      path: '/features'
+      fullPath: '/features'
+      preLoaderRoute: typeof FeaturesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/call': {
       id: '/call'
       path: '/call'
@@ -152,6 +178,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CallRoute: CallRoute,
+  FeaturesRoute: FeaturesRoute,
   MotivationRoute: MotivationRoute,
   QueueRoute: QueueRoute,
   SettingsRoute: SettingsRoute,
