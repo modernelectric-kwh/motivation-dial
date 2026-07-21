@@ -7,14 +7,29 @@ const KEYS = {
   motivation: "mc.motivation",
   queueIdx: "mc.queueIdx",
   history: "mc.history",
+  chatgpt: "mc.chatgpt",
+  claude: "mc.claude",
+  perplexity: "mc.perplexity",
+  vmScript: "mc.vmScript",
+  dnc: "mc.dnc",
+  tags: "mc.tags",
+  followupTemplate: "mc.followupTemplate",
+  calCom: "mc.calCom",
 } as const;
 
 export interface CallLog {
   contactId: string;
   contactName: string;
   at: string;
-  outcome: "connected" | "no-answer" | "voicemail" | "skipped";
+  outcome: "connected" | "no-answer" | "voicemail-dropped" | "voicemail" | "callback" | "not-interested" | "wrong-number" | "skipped";
   notes: string;
+}
+
+export interface ChatContext {
+  source: "chatgpt" | "claude" | "perplexity";
+  updatedAt: string;
+  entryCount: number;
+  digest: string; // condensed searchable summary
 }
 
 const isBrowser = () => typeof window !== "undefined";
@@ -53,4 +68,39 @@ export const store = {
   addLog: (log: CallLog) => set(KEYS.history, [log, ...get<CallLog[]>(KEYS.history, [])]),
   historyFor: (contactId: string) =>
     get<CallLog[]>(KEYS.history, []).filter((l) => l.contactId === contactId),
+  // Chat context ingestion
+  getChatgpt: (): ChatContext | null => get<ChatContext | null>(KEYS.chatgpt, null),
+  setChatgpt: (c: ChatContext | null) => set(KEYS.chatgpt, c),
+  getClaude: (): ChatContext | null => get<ChatContext | null>(KEYS.claude, null),
+  setClaude: (c: ChatContext | null) => set(KEYS.claude, c),
+  getPerplexity: (): ChatContext | null => get<ChatContext | null>(KEYS.perplexity, null),
+  setPerplexity: (c: ChatContext | null) => set(KEYS.perplexity, c),
+  // Voicemail drop script
+  getVmScript: (): string =>
+    get(KEYS.vmScript, "Hey — Chino here. Missed you. Sending a placeholder for tomorrow; grab it or decline, no pressure. Talk soon."),
+  setVmScript: (s: string) => set(KEYS.vmScript, s),
+  // DNC list
+  getDNC: (): string[] => get<string[]>(KEYS.dnc, []),
+  addDNC: (phone: string) => {
+    const list = get<string[]>(KEYS.dnc, []);
+    if (!list.includes(phone)) set(KEYS.dnc, [phone, ...list]);
+  },
+  removeDNC: (phone: string) => set(KEYS.dnc, get<string[]>(KEYS.dnc, []).filter((p) => p !== phone)),
+  // Contact tags
+  getTags: (): Record<string, string[]> => get(KEYS.tags, {}),
+  setTagsFor: (id: string, tags: string[]) => {
+    const all = get<Record<string, string[]>>(KEYS.tags, {});
+    all[id] = tags;
+    set(KEYS.tags, all);
+  },
+  // Follow-up email template
+  getFollowupTemplate: (): string =>
+    get(
+      KEYS.followupTemplate,
+      `Hey {{first}},\n\nGreat catching up. Quick recap of what we covered — and a next step so we don't lose momentum.\n\n— Chino`,
+    ),
+  setFollowupTemplate: (s: string) => set(KEYS.followupTemplate, s),
+  // Cal.com link
+  getCalCom: (): string => get(KEYS.calCom, "https://cal.com/chinolex/call"),
+  setCalCom: (s: string) => set(KEYS.calCom, s),
 };
