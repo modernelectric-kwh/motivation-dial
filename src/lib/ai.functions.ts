@@ -7,6 +7,7 @@ const InputSchema = z.object({
   companyContext: z.string(),
   motivationSeed: z.string(),
   lastNotes: z.string().optional(),
+  chatContext: z.string().optional(),
 });
 
 export const generateCallPrep = createServerFn({ method: "POST" })
@@ -29,7 +30,10 @@ MOTIVATION SEED (Chino's core drivers):
 ${data.motivationSeed}
 
 LAST TOUCHPOINT:
-${data.lastNotes || "(first contact)"}`;
+${data.lastNotes || "(first contact)"}
+
+CROSS-APP AI CONTEXT (ChatGPT / Claude / Perplexity digests — use ONLY if directly relevant to this contact):
+${data.chatContext?.slice(0, 4000) || "(none)"}`;
 
     const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
