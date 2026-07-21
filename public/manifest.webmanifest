@@ -1,0 +1,12 @@
+{
+  "name": "Memory Center",
+  "short_name": "Memory",
+  "description": "Soul-centric power dialer with Notion CRM",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1410",
+  "theme_color": "#d97748",
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "any", "type": "image/x-icon" }
+  ]
+}
