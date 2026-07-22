@@ -1,0 +1,195 @@
+{
+  "version": 1,
+  "sdk_version": "0.24.0",
+  "path": "/mcp",
+  "auth": {
+    "type": "oauth",
+    "issuer": "https://wydqyoawlmobekmhqhbt.supabase.co/auth/v1",
+    "accepted_audiences": [
+      "authenticated"
+    ]
+  },
+  "mcp": {
+    "server": {
+      "name": "memory-center-mcp",
+      "version": "0.1.0",
+      "title": "Memory Center"
+    },
+    "tools": [
+      {
+        "name": "log_to_notion",
+        "title": "Log call to Notion CRM",
+        "description": "Create a page in Chino's Notion CRM database summarizing a call or interaction with a contact. Requires the Notion database ID/URL, contact name, outcome, and notes.",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": true
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "databaseId": {
+              "type": "string",
+              "description": "Notion database ID or URL for the CRM."
+            },
+            "contactName": {
+              "type": "string",
+              "description": "Full name of the contact."
+            },
+            "outcome": {
+              "type": "string",
+              "description": "Short outcome tag, e.g. connected, voicemail, callback, not-interested."
+            },
+            "notes": {
+              "type": "string",
+              "description": "Freeform notes from the call."
+            }
+          },
+          "required": [
+            "databaseId",
+            "contactName",
+            "outcome",
+            "notes"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "draft_gmail_email",
+        "title": "Draft a Gmail email",
+        "description": "Create a draft email in Chino's Gmail using the connected Google account. Does NOT send — the draft appears in the Drafts folder for review.",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": true
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "to": {
+              "type": "string",
+              "description": "Recipient email address."
+            },
+            "subject": {
+              "type": "string",
+              "description": "Email subject line."
+            },
+            "body": {
+              "type": "string",
+              "description": "Plain-text email body."
+            }
+          },
+          "required": [
+            "to",
+            "subject",
+            "body"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "send_calendar_placeholder",
+        "title": "Send calendar placeholder",
+        "description": "Create a 30-minute Google Calendar placeholder titled '{firstName} <> Chino - Catch up?' tomorrow at 1pm or 2pm PT (whichever is free) and invite the attendee's email.",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": true
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "firstName": {
+              "type": "string",
+              "description": "First name of the invitee."
+            },
+            "email": {
+              "type": "string",
+              "description": "Invitee email address (optional)."
+            }
+          },
+          "required": [
+            "firstName"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "perplexity_brief",
+        "title": "Perplexity brief on a person",
+        "description": "Get a 4-line live brief on a person (current role, recent activity, common ground with an energy-reliability founder, one warm opener) with citations, via Perplexity.",
+        "annotations": {
+          "readOnlyHint": true,
+          "openWorldHint": true
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Full name of the person."
+            },
+            "org": {
+              "type": "string",
+              "description": "Organization the person is at (optional)."
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "generate_pitch",
+        "title": "Generate a 60-second call pitch",
+        "description": "Generate a 60-second spoken pitch and a one-line motivation card for a contact, using Chino's soul-centric 4-motive stack. Returns JSON with pitch and motivation strings.",
+        "annotations": {
+          "readOnlyHint": true,
+          "openWorldHint": true
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "contactName": {
+              "type": "string",
+              "description": "Full name of the contact."
+            },
+            "contactOrg": {
+              "type": "string",
+              "description": "Organization the contact is at."
+            },
+            "companyContext": {
+              "type": "string",
+              "description": "Chino's company/product context (markdown)."
+            },
+            "motivationSeed": {
+              "type": "string",
+              "description": "Chino's motivation seed: mastery, protection, wealth, recognition drivers."
+            },
+            "lastNotes": {
+              "type": "string",
+              "description": "Notes from the last touchpoint, if any."
+            }
+          },
+          "required": [
+            "contactName",
+            "companyContext",
+            "motivationSeed"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      }
+    ]
+  }
+}
