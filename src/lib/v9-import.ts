@@ -181,12 +181,14 @@ export async function importV9CSV(text: string): Promise<ImportResult> {
   let phoneCount = 0;
   let quarantinedCount = 0;
 
+  let rowIndex = 0;
   for (const row of rows) {
+    rowIndex++;
     const tier = normalizeTier(row["tier"]);
 
     if (!tier) {
       rejectionReasons.push({
-        row: 0,
+        row: rowIndex,
         reason: `invalid_tier: "${row["tier"]?.slice(0, 40)}"`,
       });
       continue;

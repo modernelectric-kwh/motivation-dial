@@ -36,6 +36,7 @@ function ExportPage() {
         setContacts(con);
         setCampaigns(cam);
       })
+      .catch(() => toast.error("Failed to load export data"))
       .finally(() => setLoading(false));
   }, []);
 

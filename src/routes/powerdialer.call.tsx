@@ -252,10 +252,15 @@ function PowerdialerCall() {
         newStatus === "suppressed" ? outcome : queueItem.suppressionReason,
     };
 
-    await Promise.all([
-      db.updateCallAttempt(updatedAttempt),
-      db.updateQueueItem(updatedQI),
-    ]);
+    try {
+      await Promise.all([
+        db.updateCallAttempt(updatedAttempt),
+        db.updateQueueItem(updatedQI),
+      ]);
+    } catch {
+      toast.error("Failed to save outcome");
+      return;
+    }
 
     setAttempts((prev) =>
       prev.map((a) => (a.id === updatedAttempt.id ? updatedAttempt : a)),
@@ -285,6 +290,7 @@ function PowerdialerCall() {
     const unreconciledAttempts = attempts.filter(
       (a) => a.contactId === contact.id && a.outcome === null,
     );
+    const resolvedMap = new Map<string, CallAttempt>();
     const ops: Promise<unknown>[] = [];
 
     for (const a of unreconciledAttempts) {
@@ -294,6 +300,7 @@ function PowerdialerCall() {
         outcome: "skip_for_now",
         notes: a.notes || "Skipped without calling",
       };
+      resolvedMap.set(a.id, resolved);
       ops.push(db.updateCallAttempt(resolved));
     }
 
@@ -304,13 +311,19 @@ function PowerdialerCall() {
     };
     ops.push(db.updateQueueItem(updatedQI));
 
-    await Promise.all(ops);
+    try {
+      await Promise.all(ops);
+    } catch {
+      toast.error("Failed to skip contact");
+      return;
+    }
+
     setQueueItems((prev) =>
       prev.map((qi) => (qi.id === queueItem.id ? updatedQI : qi)),
     );
     if (unreconciledAttempts.length > 0) {
       setAttempts((prev) =>
-        prev.filter((a) => a.contactId !== contact.id || a.outcome !== null),
+        prev.map((a) => resolvedMap.get(a.id) ?? a),
       );
     }
     advance();
