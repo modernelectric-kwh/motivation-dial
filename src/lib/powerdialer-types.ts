@@ -99,7 +99,7 @@ export type CommitmentStatus =
   | "yes"
   | "needs_follow_up";
 
-export type CallChannel = "facetime_audio" | "phone";
+export type CallChannel = "facetime_audio" | "phone" | "manual";
 
 /** A single call attempt — created on launch, resolved on outcome selection. */
 export interface CallAttempt {

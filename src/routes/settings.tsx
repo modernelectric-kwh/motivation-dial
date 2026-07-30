@@ -175,10 +175,10 @@ function Settings() {
 
         <Section
           label="Voicemail drop"
-          sub="Record once. Auto-plays through your speaker when you tap Drop VM on a call."
+          sub="Record once or upload a voice memo. Auto-plays through your speaker when you tap Auto VM Drop."
         >
           <p className="mb-3 rounded-lg border border-dashed border-border bg-card/40 p-3 text-xs text-muted-foreground">
-            Reverse-engineered local approach: no third-party API, no carrier tricks. Set your iPhone to speaker before tapping Drop VM. If they don't pick up, the recording lands in their voicemail.
+            Reverse-engineered local approach: no third-party API, no carrier tricks. Set your iPhone to speaker before tapping Auto VM Drop. If they don't pick up, the recording lands in their voicemail.
           </p>
           <textarea
             value={vmScript}
@@ -212,6 +212,26 @@ function Settings() {
                 Erase
               </button>
             )}
+          </div>
+          <div className="mt-3">
+            <label className="flex cursor-pointer items-center justify-center rounded-lg border border-dashed border-primary/50 bg-primary/5 px-4 py-3 text-sm font-medium text-primary transition-colors hover:bg-primary/10">
+              Upload voice memo (.mp3, .wav, .m4a)
+              <input
+                type="file"
+                accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg"
+                className="hidden"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  await saveVoicemailBlob(f);
+                  setVmHas(true);
+                  if (vmUrl) URL.revokeObjectURL(vmUrl);
+                  setVmUrl(URL.createObjectURL(f));
+                  toast.success("Voicemail uploaded");
+                  e.target.value = "";
+                }}
+              />
+            </label>
           </div>
           {vmUrl && (
             <audio controls src={vmUrl} className="mt-3 w-full" />

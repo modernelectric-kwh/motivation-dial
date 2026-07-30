@@ -1,17 +1,12 @@
 // ── Powerdialer Call Screen ──
-// Simplified: contact card + Start FaceTime Audio + outcome pills + follow-up row.
-// All manual, no autonomous dialing.
+// Contact card + Start FaceTime Audio + quick actions with inline outcomes + skip row.
 
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { db } from "@/lib/powerdialer-db";
-import type {
-  V9Contact,
-  QueueItem,
-  CallAttempt,
-  CallOutcome,
-} from "@/lib/powerdialer-types";
+import type { V9Contact, QueueItem, CallAttempt, CallOutcome } from "@/lib/powerdialer-types";
 import { TIER_META } from "@/lib/powerdialer-constants";
+import { loadVoicemailBlob } from "@/lib/vm-storage";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/powerdialer/call")({
@@ -19,14 +14,11 @@ export const Route = createFileRoute("/powerdialer/call")({
     meta: [
       { title: "Powerdialer · Call" },
       { name: "description", content: "V9 relationship call. Manual outcome required." },
-      { property: "og:title", content: "Powerdialer · Call" },
-      { property: "og:description", content: "Human-operated call console." },
     ],
   }),
   component: PowerdialerCall,
 });
 
-// ── Touch summary helpers ──
 function formatTouchSummary(c: V9Contact): string {
   const parts: string[] = [];
   if (c.lastInteraction) parts.push(`Last: ${c.lastInteraction}`);
@@ -52,17 +44,22 @@ function formatFullTouch(c: V9Contact): string {
   return lines.join("\n") || "No additional touch data";
 }
 
-const OUTCOME_PILLS: Array<{ value: CallOutcome; label: string; color: string }> = [
-  { value: "texted", label: "Texted", color: "border-sky-500/40 bg-sky-500/10 text-sky-400" },
-  { value: "auto_vm", label: "Auto VM", color: "border-blue-500/40 bg-blue-500/10 text-blue-400" },
-  { value: "manual_vm", label: "Manual VM", color: "border-indigo-500/40 bg-indigo-500/10 text-indigo-400" },
-  { value: "calendar_sent", label: "🗓️ sent", color: "border-amber-500/40 bg-amber-500/10 text-amber-400" },
-];
+function buildGCalUrl(name: string, email: string | undefined, phone: string | undefined): string {
+  const now = new Date();
+  const start = new Date(now);
+  start.setDate(start.getDate() + 1);
+  start.setHours(10, 0, 0, 0);
+  const end = new Date(start.getTime() + 30 * 60 * 1000);
+  const fmt = (d: Date) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const firstName = name.split(" ")[0];
+  const title = encodeURIComponent(`${firstName} <> Chino — catch up`);
+  const desc = encodeURIComponent(phone ? `Phone: ${phone}` : "");
+  const guests = email ? `&add=${encodeURIComponent(email)}` : "";
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${fmt(start)}/${fmt(end)}&details=${desc}${guests}&confer=Meet`;
+}
 
-/** Return the most recent unresolved attempt for a contact, or null. */
 function getLatestUnresolvedAttempt(attempts: CallAttempt[], contactId: string): CallAttempt | null {
-  return attempts
-    .filter((a) => a.contactId === contactId && a.outcome === null)
+  return attempts.filter((a) => a.contactId === contactId && a.outcome === null)
     .sort((a, b) => new Date(b.initiatedAt).getTime() - new Date(a.initiatedAt).getTime())[0] ?? null;
 }
 
@@ -74,60 +71,44 @@ function PowerdialerCall() {
   const [attempts, setAttempts] = useState<CallAttempt[]>([]);
   const [touchExpanded, setTouchExpanded] = useState(false);
   const [called, setCalled] = useState(false);
+  const [vmBlob, setVmBlob] = useState<Blob | null>(null);
+  const [vmPlaying, setVmPlaying] = useState(false);
 
-  // Load data
   useEffect(() => {
-    Promise.all([
-      db.getAllContacts(),
-      db.getAllQueueItems(),
-      db.getAllCallAttempts(),
-    ]).then(([allContacts, allItems, atts]) => {
-      setAttempts(atts);
-
-      const now = new Date().toISOString();
-      const v9Items = allItems.filter(
-        (qi) =>
+    loadVoicemailBlob().then((b) => setVmBlob(b));
+    Promise.all([db.getAllContacts(), db.getAllQueueItems(), db.getAllCallAttempts()])
+      .then(([allContacts, allItems, atts]) => {
+        setAttempts(atts);
+        const now = new Date().toISOString();
+        const v9Items = allItems.filter((qi) =>
           qi.campaignId === "v9_relationship_calls" &&
           qi.queueStatus !== "suppressed" &&
           qi.queueStatus !== "completed" &&
           qi.queueStatus !== "attempted" &&
-          (!qi.nextCallAt || qi.nextCallAt <= now),
-      );
-
-      v9Items.sort((a, b) => a.priority - b.priority);
-
-      const contactMap = new Map(allContacts.map((c) => [c.id, c]));
-      const orderedContacts = v9Items
-        .map((qi) => contactMap.get(qi.contactId))
-        .filter(Boolean) as V9Contact[];
-
-      setQueueItems(v9Items);
-      setContacts(orderedContacts);
-
-      // If first contact has pending outcome, show outcome state
-      if (v9Items.length > 0) {
-        const firstStatus = v9Items[0].queueStatus;
-        setCalled(firstStatus === "initiated_unconfirmed" || firstStatus === "outcome_required");
-      }
-
-      setLoading(false);
-    }).catch(() => setLoading(false));
+          (!qi.nextCallAt || qi.nextCallAt <= now)
+        );
+        v9Items.sort((a, b) => a.priority - b.priority);
+        const contactMap = new Map(allContacts.map((c) => [c.id, c]));
+        const ordered = v9Items.map((qi) => contactMap.get(qi.contactId)).filter(Boolean) as V9Contact[];
+        setQueueItems(v9Items);
+        setContacts(ordered);
+        if (v9Items.length > 0) {
+          const st = v9Items[0].queueStatus;
+          setCalled(st === "initiated_unconfirmed" || st === "outcome_required");
+        }
+        setLoading(false);
+      }).catch(() => setLoading(false));
   }, []);
 
   const contact = contacts[currentIdx];
   const queueItem = queueItems[currentIdx];
 
-  const duplicatePhone = useMemo(
-    () =>
-      contact?.phone
-        ? attempts.some(
-            (a) =>
-              a.phoneUsed === contact.phone &&
-              a.contactId !== contact.id &&
-              (a.outcome === "wrong_number" || a.outcome === "do_not_call" || a.outcome === "duplicate"),
-          )
-        : false,
-    [contact?.phone, attempts],
+  const duplicatePhone = useMemo(() =>
+    contact?.phone ? attempts.some((a) =>
+      a.phoneUsed === contact.phone && a.contactId !== contact.id &&
+      (a.outcome === "wrong_number" || a.outcome === "do_not_call" || a.outcome === "duplicate")
+    ) : false,
+    [contact?.phone, attempts]
   );
 
   const advance = () => {
@@ -137,281 +118,164 @@ function PowerdialerCall() {
     setTouchExpanded(false);
   };
 
+  const refreshCurrent = () => {
+    db.getAllQueueItems().then((allItems) => {
+      const now = new Date().toISOString();
+      const v9Items = allItems.filter((qi) =>
+        qi.campaignId === "v9_relationship_calls" &&
+        qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" &&
+        (!qi.nextCallAt || qi.nextCallAt <= now)
+      ).sort((a, b) => a.priority - b.priority);
+      setQueueItems(v9Items);
+      if (currentIdx >= v9Items.length) setCurrentIdx(0);
+    });
+    db.getAllCallAttempts().then(setAttempts);
+  };
+
   // ── Start FaceTime Audio ──
   const launchCall = async () => {
     if (!contact?.phone || !queueItem) return;
-
     const url = `facetime-audio://${contact.phone}`;
-
     const attempt: CallAttempt = {
-      id: `att-${crypto.randomUUID()}`,
-      queueItemId: queueItem.id,
-      contactId: contact.id,
-      campaignId: queueItem.campaignId,
-      initiatedAt: new Date().toISOString(),
-      loggedAt: null,
-      calledBy: "Chino",
-      channel: "facetime_audio",
-      phoneUsed: contact.phone,
-      outcome: null,
-      notes: "",
-      nextStep: "",
-      nextStepDue: null,
-      commitmentStatus: "not_discussed",
-      commitmentDetails: "",
-      evidenceReference: "",
+      id: `att-${crypto.randomUUID()}`, queueItemId: queueItem.id, contactId: contact.id,
+      campaignId: queueItem.campaignId, initiatedAt: new Date().toISOString(), loggedAt: null,
+      calledBy: "Chino", channel: "facetime_audio", phoneUsed: contact.phone, outcome: null,
+      notes: "", nextStep: "", nextStepDue: null, commitmentStatus: "not_discussed",
+      commitmentDetails: "", evidenceReference: "",
     };
-
-    const updatedQI: QueueItem = {
-      ...queueItem,
-      queueStatus: "initiated_unconfirmed",
-      attemptCount: queueItem.attemptCount + 1,
-      lastAttemptAt: attempt.initiatedAt,
-    };
-
+    const updatedQI: QueueItem = { ...queueItem, queueStatus: "initiated_unconfirmed", attemptCount: queueItem.attemptCount + 1, lastAttemptAt: attempt.initiatedAt };
     try {
-      await Promise.all([
-        db.addCallAttempt(attempt),
-        db.updateQueueItem(updatedQI),
-      ]);
+      await Promise.all([db.addCallAttempt(attempt), db.updateQueueItem(updatedQI)]);
       setAttempts((prev) => [attempt, ...prev]);
-      setQueueItems((prev) =>
-        prev.map((qi) => (qi.id === queueItem.id ? updatedQI : qi)),
-      );
+      setQueueItems((prev) => prev.map((qi) => qi.id === queueItem.id ? updatedQI : qi));
       setCalled(true);
       toast.success("FaceTime Audio launched");
-    } catch {
-      toast.error("Failed to record attempt");
-      return;
-    }
-
+    } catch { toast.error("Failed to record attempt"); return; }
     window.location.href = url;
   };
 
-  // ── Save outcome pill ──
-  const saveOutcome = async (outcome: CallOutcome) => {
-    if (!contact || !queueItem) return;
-
-    const latestAttempt = getLatestUnresolvedAttempt(attempts, contact.id);
-    if (!latestAttempt) {
-      toast.error("No unconfirmed call attempt to log");
-      return;
-    }
-
-    const updatedAttempt: CallAttempt = {
-      ...latestAttempt,
-      loggedAt: new Date().toISOString(),
-      outcome,
-      notes: "",
-    };
-
-    const updatedQI: QueueItem = {
-      ...queueItem,
-      queueStatus: "attempted",
-    };
-
-    try {
-      await Promise.all([
-        db.updateCallAttempt(updatedAttempt),
-        db.updateQueueItem(updatedQI),
-      ]);
-    } catch {
-      toast.error("Failed to save outcome");
-      return;
-    }
-
-    setAttempts((prev) =>
-      prev.map((a) => (a.id === updatedAttempt.id ? updatedAttempt : a)),
-    );
-    setQueueItems((prev) =>
-      prev.map((qi) => (qi.id === queueItem.id ? updatedQI : qi)),
-    );
-
-    toast.success(`Logged: ${outcome.replace("_", " ")}`);
-    advance();
+  const playVoicemailDrop = async () => {
+    if (!vmBlob) { toast.error("No voicemail recording in Settings"); return; }
+    if (vmPlaying) return;
+    const audio = new Audio(URL.createObjectURL(vmBlob));
+    audio.onended = () => { setVmPlaying(false); URL.revokeObjectURL(audio.src); };
+    audio.onerror = () => { setVmPlaying(false); toast.error("Playback failed"); };
+    setVmPlaying(true);
+    try { await audio.play(); } catch { setVmPlaying(false); toast.error("Audio blocked — tap again"); }
   };
 
-  // ── Intro Offered → Spark Email ──
-  const introOffered = async () => {
+  const logOutcome = async (outcome: CallOutcome) => {
     if (!contact || !queueItem) return;
-
     const latestAttempt = getLatestUnresolvedAttempt(attempts, contact.id);
     const ops: Promise<unknown>[] = [];
-
     if (latestAttempt) {
-      ops.push(db.updateCallAttempt({
-        ...latestAttempt,
-        loggedAt: new Date().toISOString(),
-        outcome: "intro_offered",
-        notes: "",
+      ops.push(db.updateCallAttempt({ ...latestAttempt, loggedAt: new Date().toISOString(), outcome, notes: "" }));
+    } else {
+      ops.push(db.addCallAttempt({
+        id: `att-manual-${crypto.randomUUID().slice(0, 8)}`, queueItemId: queueItem.id, contactId: contact.id,
+        campaignId: queueItem.campaignId, initiatedAt: new Date().toISOString(), loggedAt: new Date().toISOString(),
+        calledBy: "Chino", channel: "manual", phoneUsed: contact.phone || "", outcome, notes: "",
+        nextStep: "", nextStepDue: null, commitmentStatus: "not_discussed", commitmentDetails: "", evidenceReference: "",
       }));
     }
+    ops.push(db.updateQueueItem({ ...queueItem, queueStatus: "attempted" }));
+    try { await Promise.all(ops); } catch { toast.error("Failed to save outcome"); return; }
+    toast.success(`Logged: ${outcome.replace("_", " ")}`);
+    advance();
+    refreshCurrent();
+  };
 
-    ops.push(db.updateQueueItem({
-      ...queueItem,
-      queueStatus: "attempted",
-    }));
-
-    try {
-      await Promise.all(ops);
-    } catch {
-      toast.error("Failed to log intro");
-      return;
-    }
-
+  const introOffered = async () => {
+    if (!contact || !queueItem) return;
+    const latestAttempt = getLatestUnresolvedAttempt(attempts, contact.id);
+    const ops: Promise<unknown>[] = [];
+    if (latestAttempt) ops.push(db.updateCallAttempt({ ...latestAttempt, loggedAt: new Date().toISOString(), outcome: "intro_offered", notes: "" }));
+    ops.push(db.updateQueueItem({ ...queueItem, queueStatus: "attempted" }));
+    try { await Promise.all(ops); } catch { toast.error("Failed to log intro"); return; }
     if (contact.email) {
-      const subject = encodeURIComponent(`${contact.fullName.split(" ")[0]} <> Chino — intro`);
-      window.open(`mailto:${contact.email}?subject=${subject}`, "_blank");
+      window.open(`mailto:${contact.email}?subject=${encodeURIComponent(contact.fullName.split(" ")[0] + " <> Chino — intro")}`, "_blank");
     }
     toast.success("Intro Offered — email opened");
     advance();
+    refreshCurrent();
   };
 
-  // ── Call again later → Re-queue in 3 days ──
   const callAgainLater = async () => {
     if (!contact || !queueItem) return;
-
     const threeDays = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
     const latestAttempt = getLatestUnresolvedAttempt(attempts, contact.id);
     const ops: Promise<unknown>[] = [];
-
-    if (latestAttempt) {
-      ops.push(db.updateCallAttempt({
-        ...latestAttempt,
-        loggedAt: new Date().toISOString(),
-        outcome: "skip_for_now",
-        notes: "Re-queued for 3 days",
-      }));
-    }
-
-    ops.push(db.updateQueueItem({
-      ...queueItem,
-      queueStatus: "queued",
-      nextCallAt: threeDays,
-    }));
-
-    try {
-      await Promise.all(ops);
-    } catch {
-      toast.error("Failed to re-queue");
-      return;
-    }
-
+    if (latestAttempt) ops.push(db.updateCallAttempt({ ...latestAttempt, loggedAt: new Date().toISOString(), outcome: "skip_for_now", notes: "Re-queued for 3 days" }));
+    ops.push(db.updateQueueItem({ ...queueItem, queueStatus: "queued", nextCallAt: threeDays }));
+    try { await Promise.all(ops); } catch { toast.error("Failed to re-queue"); return; }
     toast.success("Re-queued in 3 days");
     advance();
+    refreshCurrent();
   };
 
-  // ── Skip: random 5-21 slots down ──
-  const skipDown = async () => {
-    if (!queueItem || !contact) return;
+  const reorderInQueue = async (qi: QueueItem, targetPriority: number, reason: string) => {
+    const latestAttempt = getLatestUnresolvedAttempt(attempts, qi.contactId);
+    const ops: Promise<unknown>[] = [];
+    if (latestAttempt) ops.push(db.updateCallAttempt({ ...latestAttempt, loggedAt: new Date().toISOString(), outcome: "skip_for_now", notes: reason }));
+    ops.push(db.updateQueueItem({ ...qi, priority: targetPriority }));
+    try { await Promise.all(ops); } catch { toast.error("Failed to reorder"); return false; }
+    return true;
+  };
 
+  const softSkip = async () => {
+    if (!queueItem || !contact) return;
     const items = await db.getAllQueueItems();
     const now = new Date().toISOString();
-    const eligible = items
-      .filter((qi) =>
-        qi.campaignId === "v9_relationship_calls" &&
-        qi.queueStatus !== "suppressed" &&
-        qi.queueStatus !== "completed" &&
-        qi.queueStatus !== "attempted" &&
-        (!qi.nextCallAt || qi.nextCallAt <= now),
-      )
-      .sort((a, b) => a.priority - b.priority);
-
+    const eligible = items.filter((qi) => qi.campaignId === "v9_relationship_calls" && qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" && (!qi.nextCallAt || qi.nextCallAt <= now)).sort((a, b) => a.priority - b.priority);
     const curIdx = eligible.findIndex((qi) => qi.id === queueItem.id);
     if (curIdx === -1 || eligible.length <= 1) return;
-
     const shift = Math.floor(Math.random() * 17) + 5;
     const targetIdx = Math.min(curIdx + shift, eligible.length - 1);
     if (targetIdx === curIdx) return;
-
-    let newPriority: number;
-    if (targetIdx >= eligible.length - 1) {
-      newPriority = eligible[eligible.length - 1].priority + 1;
-    } else {
-      newPriority = (eligible[targetIdx].priority + eligible[targetIdx + 1].priority) / 2;
-    }
-
-    const latestAttempt = getLatestUnresolvedAttempt(attempts, contact.id);
-    const ops: Promise<unknown>[] = [];
-
-    if (latestAttempt) {
-      ops.push(db.updateCallAttempt({
-        ...latestAttempt,
-        loggedAt: new Date().toISOString(),
-        outcome: "skip_for_now",
-        notes: `Skipped ${shift} slots down`,
-      }));
-    }
-
-    ops.push(db.updateQueueItem({ ...queueItem, priority: newPriority }));
-
-    try {
-      await Promise.all(ops);
-    } catch {
-      toast.error("Failed to skip");
-      return;
-    }
-
+    const newPriority = targetIdx >= eligible.length - 1 ? eligible[eligible.length - 1].priority + 1 : (eligible[targetIdx].priority + eligible[targetIdx + 1].priority) / 2;
+    await reorderInQueue(queueItem, newPriority, `Skipped ${shift} slots down`);
     toast.success(`Skipped ${shift} slots down`);
     advance();
+    refreshCurrent();
   };
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted-foreground">Loading queue…</p>
-      </div>
-    );
-  }
+  const warmSkip = async () => {
+    if (!queueItem || !contact) return;
+    const [items, allContacts] = await Promise.all([db.getAllQueueItems(), db.getAllContacts()]);
+    const now = new Date().toISOString();
+    const filtered = items.filter((qi) => qi.campaignId === "v9_relationship_calls" && qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" && (!qi.nextCallAt || qi.nextCallAt <= now)).sort((a, b) => a.priority - b.priority);
+    const contactMap = new Map(allContacts.map((c) => [c.id, c]));
+    const withTier = filtered.map((qi) => ({ qi, tier: contactMap.get(qi.contactId)?.tier }));
+    const lastIC = withTier.filter((x) => x.tier === "inner_circle").pop();
+    const newPriority = lastIC ? lastIC.qi.priority + 0.5 : (filtered[0]?.priority ?? 0) - 1;
+    await reorderInQueue(queueItem, newPriority, "Warm skip — top of warm");
+    toast.success("Moved to top of warm list");
+    advance();
+    refreshCurrent();
+  };
 
-  if (contacts.length === 0) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
-        <h2 className="font-serif text-2xl">Queue complete.</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          All eligible contacts have been processed.
-        </p>
-        <Link
-          to="/"
-          className="mt-6 rounded-lg bg-primary px-5 py-2 font-medium text-primary-foreground"
-        >
-          Back to Dashboard
-        </Link>
-      </div>
-    );
-  }
+  const hardSkip = async () => {
+    if (!queueItem || !contact) return;
+    const latestAttempt = getLatestUnresolvedAttempt(attempts, contact.id);
+    const ops: Promise<unknown>[] = [];
+    if (latestAttempt) ops.push(db.updateCallAttempt({ ...latestAttempt, loggedAt: new Date().toISOString(), outcome: "skip_for_now", notes: "Hard skip — removed from queue" }));
+    ops.push(db.updateQueueItem({ ...queueItem, queueStatus: "suppressed" }));
+    try { await Promise.all(ops); } catch { toast.error("Failed to suppress"); return; }
+    toast.success("Removed from queue");
+    advance();
+    refreshCurrent();
+  };
 
-  if (!contact) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
-        <h2 className="font-serif text-2xl">All done.</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          You've reached the end of the queue.
-        </p>
-        <Link
-          to="/"
-          className="mt-6 rounded-lg bg-primary px-5 py-2 font-medium text-primary-foreground"
-        >
-          Back to Dashboard
-        </Link>
-      </div>
-    );
-  }
+  if (loading) return <div className="flex min-h-screen items-center justify-center"><p className="text-sm text-muted-foreground">Loading queue…</p></div>;
+  if (contacts.length === 0) return <div className="flex min-h-screen flex-col items-center justify-center px-6 text-center"><h2 className="font-serif text-2xl">Queue complete.</h2><p className="mt-2 text-sm text-muted-foreground">All eligible contacts have been processed.</p><Link to="/" className="mt-6 rounded-lg bg-primary px-5 py-2 font-medium text-primary-foreground">Back to Dashboard</Link></div>;
+  if (!contact) return <div className="flex min-h-screen flex-col items-center justify-center px-6 text-center"><h2 className="font-serif text-2xl">All done.</h2><p className="mt-2 text-sm text-muted-foreground">You've reached the end of the queue.</p><Link to="/" className="mt-6 rounded-lg bg-primary px-5 py-2 font-medium text-primary-foreground">Back to Dashboard</Link></div>;
 
   return (
     <div className="min-h-screen pb-20">
-      {/* Header */}
       <header className="sticky top-0 z-10 border-b border-border bg-background/90 px-5 py-4 backdrop-blur">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <Link to="/">← Memory Center</Link>
-          <span className="uppercase tracking-[0.2em]">
-            {currentIdx + 1} / {contacts.length}
-          </span>
-          <div className="flex gap-3">
-            <button type="button" onClick={skipDown} className="text-muted-foreground" aria-label="Skip this contact">
-              Skip →
-            </button>
-          </div>
+          <Link to="/">← Dashboard</Link>
+          <span className="uppercase tracking-[0.2em]">{currentIdx + 1} / {contacts.length}</span>
         </div>
       </header>
 
@@ -419,166 +283,76 @@ function PowerdialerCall() {
         {/* Contact card */}
         <div className="rounded-2xl border border-border bg-card p-5">
           <div className="flex items-center gap-2">
-            <span
-              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase ${
-                TIER_META[contact.tier]?.badge || "border-border text-muted-foreground"
-              }`}
-            >
-              {contact.tier.replace("_", " ")}
-            </span>
-            <span className="text-[10px] text-muted-foreground">
-              Engagement: {contact.engagementScore.toFixed(0)}
-            </span>
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase ${TIER_META[contact.tier]?.badge || "border-border text-muted-foreground"}`}>{contact.tier.replace("_", " ")}</span>
+            <span className="text-[10px] text-muted-foreground">Engagement: {contact.engagementScore.toFixed(0)}</span>
           </div>
-          <h2 className="mt-2 font-serif text-xl leading-tight">
-            {contact.fullName}
-          </h2>
-          {contact.company && (
-            <p className="text-sm text-muted-foreground">
-              {contact.title ? `${contact.title} · ` : ""}
-              {contact.company}
-            </p>
-          )}
-          {contact.phone && (
-            <p className="mt-1.5 font-mono text-sm">{contact.phone}</p>
-          )}
-          {contact.email && (
-            <a
-              href={`mailto:${contact.email}`}
-              className="block text-xs text-blue-400 hover:underline"
-            >
-              {contact.email}
-            </a>
-          )}
-          {contact.linkedinUrl && (
-            <a
-              href={contact.linkedinUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-block mt-1 text-xs text-sky-400 hover:underline"
-            >
-              LinkedIn ↗
-            </a>
-          )}
-
-          {/* Duplicate phone warning */}
-          {duplicatePhone && (
-            <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-400">
-              This phone was previously marked wrong-number or DNC on another contact. Review before dialing.
-            </div>
-          )}
-
-          {/* Touch summary */}
+          <h2 className="mt-2 font-serif text-xl leading-tight">{contact.fullName}</h2>
+          {contact.company && <p className="text-sm text-muted-foreground">{contact.title ? `${contact.title} · ` : ""}{contact.company}</p>}
+          {contact.phone && <p className="mt-1.5 font-mono text-sm">{contact.phone}</p>}
+          {contact.email && <a href={`mailto:${contact.email}`} className="block text-xs text-blue-400 hover:underline">{contact.email}</a>}
+          {contact.linkedinUrl && <a href={contact.linkedinUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-xs text-sky-400 hover:underline">LinkedIn ↗</a>}
+          {duplicatePhone && <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-400">This phone was previously marked wrong-number or DNC on another contact. Review before dialing.</div>}
           <div className="mt-3 rounded-lg border border-border/50 bg-muted/30 p-3">
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              {formatTouchSummary(contact)}
-            </p>
-            <button
-              type="button"
-              onClick={() => setTouchExpanded(!touchExpanded)}
-              className="mt-1 text-[10px] text-muted-foreground hover:text-foreground"
-            >
-              {touchExpanded ? "Collapse" : "Expand"} touch history
-            </button>
-            {touchExpanded && (
-              <pre className="mt-2 whitespace-pre-wrap text-[10px] text-muted-foreground leading-relaxed">
-                {formatFullTouch(contact)}
-              </pre>
-            )}
+            <p className="text-xs text-muted-foreground leading-relaxed">{formatTouchSummary(contact)}</p>
+            <button type="button" onClick={() => setTouchExpanded(!touchExpanded)} className="mt-1 text-[10px] text-muted-foreground hover:text-foreground">{touchExpanded ? "Collapse" : "Expand"} touch history</button>
+            {touchExpanded && <pre className="mt-2 whitespace-pre-wrap text-[10px] text-muted-foreground leading-relaxed">{formatFullTouch(contact)}</pre>}
           </div>
         </div>
 
-        {/* Start FaceTime Audio button */}
-        <button
-          disabled={!contact.phone || called}
-          onClick={launchCall}
-          className="flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-4 font-medium text-white shadow-[0_8px_30px_-10px] shadow-blue-500/40 transition-all active:scale-[0.99] disabled:opacity-30"
-        >
+        {/* Start FaceTime Audio */}
+        <button disabled={!contact.phone || called} onClick={launchCall}
+          className="flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-4 font-medium text-white shadow-[0_8px_30px_-10px] shadow-blue-500/40 transition-all active:scale-[0.99] disabled:opacity-30">
           <span className="text-base">Start FaceTime Audio</span>
         </button>
 
-        {/* ROW 1: Text / VM Drop / gCal */}
+        {/* ROW 1: Text → Email → gCal */}
         <div className="grid grid-cols-3 gap-2">
-          {contact.phone && (
-            <a
-              href={`sms:${contact.phone}`}
-              className="flex items-center justify-center rounded-lg border border-border bg-card px-3 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30 transition-colors"
-            >
-              Text
-            </a>
-          )}
-          <button
-            type="button"
-            disabled={!contact.phone}
-            onClick={() => {
-              if (!contact.phone) return;
-              window.location.href = `tel:${contact.phone}`;
-            }}
-            className="flex items-center justify-center rounded-lg border border-border bg-card px-3 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30 transition-colors disabled:opacity-30"
-          >
-            VM Drop
-          </button>
-          {contact.email && (
-            <a
-              href={`mailto:${contact.email}?subject=${encodeURIComponent(contact.fullName.split(" ")[0])}%20%3C%3E%20Chino%20%E2%80%94%20catch%20up`}
-              className="flex items-center justify-center rounded-lg border border-border bg-card px-3 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30 transition-colors"
-            >
-              gCal
-            </a>
-          )}
+          <div className="space-y-1.5">
+            {contact.phone ? <a href={`sms:${contact.phone}`} className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30">Text</a>
+              : <span className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2.5 text-xs text-muted-foreground/30">Text</span>}
+            <button type="button" onClick={() => logOutcome("texted")} className="w-full rounded-lg border border-sky-500/40 bg-sky-500/10 px-1.5 py-1.5 text-[10px] font-medium text-sky-400 active:scale-95">I texted</button>
+          </div>
+          <div className="space-y-1.5">
+            {contact.email ? <a href={`mailto:${contact.email}?subject=${encodeURIComponent(contact.fullName.split(" ")[0])}%20%3C%3E%20Chino%20%E2%80%94%20catch%20up`} className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30">Email</a>
+              : <span className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2.5 text-xs text-muted-foreground/30">Email</span>}
+            <button type="button" onClick={() => logOutcome("texted")} className="w-full rounded-lg border border-sky-500/40 bg-sky-500/10 px-1.5 py-1.5 text-[10px] font-medium text-sky-400 active:scale-95">I emailed</button>
+          </div>
+          <div className="space-y-1.5">
+            <a href={buildGCalUrl(contact.fullName, contact.email || undefined, contact.phone || undefined)} target="_blank" rel="noreferrer" className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30">gCal</a>
+            <button type="button" onClick={() => logOutcome("calendar_sent")} className="w-full rounded-lg border border-amber-500/40 bg-amber-500/10 px-1.5 py-1.5 text-[10px] font-medium text-amber-400 active:scale-95">🗓️ sent</button>
+          </div>
         </div>
 
-        {/* Post-call outcome panel */}
+        {/* ROW 2: VM Drop split */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1.5">
+            <button type="button" disabled={!vmBlob || vmPlaying} onClick={playVoicemailDrop}
+              className={`flex items-center justify-center rounded-lg border px-2 py-2.5 text-xs font-medium transition-colors ${!vmBlob ? "border-border bg-card text-muted-foreground/30" : vmPlaying ? "border-blue-500/40 bg-blue-500/10 text-blue-400 animate-pulse" : "border-blue-500/40 bg-blue-500/10 text-blue-400 hover:border-blue-500/50"}`}>
+              {vmPlaying ? "Playing…" : "Auto VM Drop"}
+            </button>
+            <button type="button" onClick={() => logOutcome("auto_vm")} className="w-full rounded-lg border border-blue-500/40 bg-blue-500/10 px-1.5 py-1.5 text-[10px] font-medium text-blue-400 active:scale-95">Auto VM</button>
+          </div>
+          <div className="space-y-1.5">
+            {contact.phone ? <a href={`tel:${contact.phone}`} className="flex items-center justify-center rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-2 py-2.5 text-xs font-medium text-indigo-400 hover:border-indigo-500/50">Manual VM Drop</a>
+              : <span className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2.5 text-xs text-muted-foreground/30">Manual VM Drop</span>}
+            <button type="button" onClick={() => logOutcome("manual_vm")} className="w-full rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-1.5 text-[10px] font-medium text-indigo-400 active:scale-95">Manual VM</button>
+          </div>
+        </div>
+
+        {/* Post-call follow-up */}
         {called && (
-          <div className="rounded-2xl border border-accent/40 bg-gradient-to-br from-accent/10 to-primary/5 p-5 space-y-4">
-            <p className="text-xs uppercase tracking-[0.2em] text-accent">
-              Log outcome
-            </p>
-
-            {/* ROW 2: Outcome pills */}
-            <div className="grid grid-cols-4 gap-2">
-              {OUTCOME_PILLS.map((pill) => (
-                <button
-                  key={pill.value}
-                  type="button"
-                  onClick={() => saveOutcome(pill.value)}
-                  className={`rounded-lg border px-2 py-2.5 text-[10px] font-medium transition-colors active:scale-95 ${pill.color}`}
-                >
-                  {pill.label}
-                </button>
-              ))}
-            </div>
-
-            {/* ROW 3: Follow-up */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={introOffered}
-                className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2.5 text-xs font-medium text-emerald-400 transition-colors active:scale-95"
-              >
-                Intro Offered → Email
-              </button>
-              <button
-                type="button"
-                onClick={callAgainLater}
-                className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs font-medium text-amber-400 transition-colors active:scale-95"
-              >
-                Call again later
-              </button>
-            </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={introOffered} className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2.5 text-xs font-medium text-emerald-400 active:scale-95">Intro Offered → Email</button>
+            <button type="button" onClick={callAgainLater} className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs font-medium text-amber-400 active:scale-95">Call again later</button>
           </div>
         )}
 
-        {/* Skip button (when not in called state) */}
-        {!called && (
-          <button
-            type="button"
-            onClick={skipDown}
-            className="flex w-full items-center justify-center rounded-lg border border-border bg-card px-4 py-2.5 text-xs text-muted-foreground hover:border-muted-foreground/30 transition-colors"
-          >
-            Skip (5–21 slots down)
-          </button>
-        )}
+        {/* Skip row */}
+        <div className="grid grid-cols-3 gap-2">
+          <button type="button" onClick={softSkip} className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2 text-[10px] text-muted-foreground hover:border-muted-foreground/30">Skip (5–21 ↓)</button>
+          <button type="button" onClick={warmSkip} className="flex items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/5 px-2 py-2 text-[10px] text-amber-400 hover:border-amber-500/40">Warm Skip</button>
+          <button type="button" onClick={hardSkip} className="flex items-center justify-center rounded-lg border border-red-500/30 bg-red-500/5 px-2 py-2 text-[10px] text-red-400 hover:border-red-500/40">Hard Skip</button>
+        </div>
       </div>
     </div>
   );

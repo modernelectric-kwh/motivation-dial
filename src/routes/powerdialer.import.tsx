@@ -90,25 +90,40 @@ function ImportPage() {
       </header>
 
       <div className="mx-auto max-w-md px-5 py-8">
-        {/* Existing import info */}
+        {/* Existing import summary */}
         {existingReport && status === "idle" && (
-          <div className="mb-6 rounded-2xl border border-border bg-card p-5">
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              Existing import
-            </p>
-            <p className="mt-2 text-sm">
-              {existingReport.totalRows.toLocaleString()} contacts imported on{" "}
-              {new Date(existingReport.importedAt).toLocaleString()}
-            </p>
-            <div className="mt-2 grid grid-cols-4 gap-2 text-center">
-              {(["inner_circle", "close", "warm", "cold"] as const).map((t) => (
-                <div key={t} className="rounded-lg border border-border p-2">
-                  <p className="text-lg font-bold">{existingReport.tierCounts[t].toLocaleString()}</p>
-                  <p className="text-[9px] uppercase text-muted-foreground">
-                    {t.replace("_", " ")}
-                  </p>
-                </div>
-              ))}
+          <div className="mb-6 space-y-4">
+            {/* Tier counts with colors */}
+            <div className="rounded-2xl border border-border bg-card p-5">
+              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">V9 Import Summary</p>
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                {existingReport.totalRows.toLocaleString()} contacts · imported {new Date(existingReport.importedAt).toLocaleString()}
+              </p>
+              <div className="mt-3 grid grid-cols-4 gap-2">
+                {(["inner_circle", "warm", "close", "cold"] as const).map((t) => (
+                  <div key={t} className="rounded-xl border border-border bg-card/60 p-3 text-center">
+                    <p className={`text-lg font-bold ${({ inner_circle: "text-rose-400", warm: "text-emerald-400", close: "text-blue-400", cold: "text-zinc-400" } as const)[t]}`}>
+                      {existingReport.tierCounts[t].toLocaleString()}
+                    </p>
+                    <p className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">{t.replace("_", " ")}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Stats */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl border border-border bg-card p-2 text-center">
+                <p className="font-mono text-sm font-bold">{existingReport.callableCount.toLocaleString()}</p>
+                <p className="text-[10px] uppercase text-muted-foreground">Callable</p>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-2 text-center">
+                <p className="font-mono text-sm font-bold">{existingReport.phoneCount.toLocaleString()}</p>
+                <p className="text-[10px] uppercase text-muted-foreground">Phones</p>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-2 text-center">
+                <p className="font-mono text-sm font-bold text-amber-400">{existingReport.duplicatePhones}</p>
+                <p className="text-[10px] uppercase text-muted-foreground">Dup Phones</p>
+              </div>
             </div>
           </div>
         )}
