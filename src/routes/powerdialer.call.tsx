@@ -620,22 +620,28 @@ function PowerdialerCall() {
                     queueStatus: "outcome_required",
                   };
 
-                  const ops: Promise<unknown>[] = [db.updateQueueItem(updatedQI)];
+                  const deferredAttempt: CallAttempt | null = latestAttempt
+                    ? {
+                        ...latestAttempt,
+                        loggedAt: new Date().toISOString(),
+                        outcome: null,
+                        notes: "Deferred — outcome pending",
+                      }
+                    : null;
 
-                  if (latestAttempt) {
-                    const deferredAttempt: CallAttempt = {
-                      ...latestAttempt,
-                      loggedAt: new Date().toISOString(),
-                      outcome: null,
-                      notes: "Deferred — outcome pending",
-                    };
-                    ops.push(db.updateCallAttempt(deferredAttempt));
+                  const ops: Promise<unknown>[] = [db.updateQueueItem(updatedQI)];
+                  if (deferredAttempt) ops.push(db.updateCallAttempt(deferredAttempt));
+
+                  await Promise.all(ops).catch(() => {
+                    toast.error("Failed to defer call");
+                    return;
+                  });
+
+                  if (deferredAttempt) {
                     setAttempts((prev) =>
                       prev.map((a) => (a.id === deferredAttempt.id ? deferredAttempt : a)),
                     );
                   }
-
-                  await Promise.all(ops);
                   setQueueItems((prev) =>
                     prev.map((qi) => (qi.id === queueItem.id ? updatedQI : qi)),
                   );
