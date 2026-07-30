@@ -202,6 +202,15 @@ function PowerdialerCall() {
   const saveOutcome = async () => {
     if (!outcome || !contact || !queueItem) return;
 
+    // Enforce commitment details when soft_yes or yes
+    if (
+      (commitmentStatus === "soft_yes" || commitmentStatus === "yes") &&
+      !commitmentDetails.trim()
+    ) {
+      toast.error("Commitment details are required for Yes / Soft Yes");
+      return;
+    }
+
     // Find the latest unlogged attempt for THIS contact
     const contactAttemptsSorted = attempts
       .filter((a) => a.contactId === contact.id && !a.loggedAt)
@@ -595,13 +604,38 @@ function PowerdialerCall() {
             <button
               onClick={async () => {
                 setShowOutcomePanel(false);
-                // Transition queue item to outcome_required
                 if (queueItem) {
+                  // Find the latest unlogged attempt for this contact and mark it
+                  // as deferred to prevent orphaned CallAttempt records.
+                  const contactAttemptsSorted = attempts
+                    .filter((a) => a.contactId === contact!.id && !a.loggedAt)
+                    .sort(
+                      (a, b) =>
+                        new Date(b.initiatedAt).getTime() - new Date(a.initiatedAt).getTime(),
+                    );
+                  const latestAttempt = contactAttemptsSorted[0];
+
                   const updatedQI: QueueItem = {
                     ...queueItem,
                     queueStatus: "outcome_required",
                   };
-                  await db.updateQueueItem(updatedQI);
+
+                  const ops: Promise<unknown>[] = [db.updateQueueItem(updatedQI)];
+
+                  if (latestAttempt) {
+                    const deferredAttempt: CallAttempt = {
+                      ...latestAttempt,
+                      loggedAt: new Date().toISOString(),
+                      outcome: null,
+                      notes: "Deferred — outcome pending",
+                    };
+                    ops.push(db.updateCallAttempt(deferredAttempt));
+                    setAttempts((prev) =>
+                      prev.map((a) => (a.id === deferredAttempt.id ? deferredAttempt : a)),
+                    );
+                  }
+
+                  await Promise.all(ops);
                   setQueueItems((prev) =>
                     prev.map((qi) => (qi.id === queueItem.id ? updatedQI : qi)),
                   );

@@ -15,6 +15,9 @@ import type {
 
 // ── Deterministic ID ──
 // Full concatenation (no hash collision risk with 29K records).
+// Uses normalizePhone so the same contact gets the same ID even if
+// the raw phone format changes between CSV exports (e.g. "5551234567"
+// vs "+15551234567").
 function makeContactId(row: {
   email: string;
   phone: string;
@@ -22,7 +25,7 @@ function makeContactId(row: {
 }): string {
   return [
     (row.email || "").toLowerCase().trim(),
-    (row.phone || "").replace(/[^\d+]/g, ""),
+    normalizePhone(row.phone || ""),
     (row.full_name || "").toLowerCase().trim(),
   ].join("||");
 }
