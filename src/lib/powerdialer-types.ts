@@ -1,8 +1,10 @@
 // ── Powerdialer Data Types ──
 // Deterministic contact IDs, append-only call logs, campaign separation.
 
+/** Relationship tier from the V9 Rolodex. */
 export type V9Tier = "inner_circle" | "close" | "warm" | "cold";
 
+/** A single V9 Rolodex contact with all 30 canonical CSV fields. */
 export interface V9Contact {
   /** Deterministic ID from (email||phone||full_name_lower). Stable across re-imports. */
   id: string;
@@ -42,6 +44,11 @@ export interface V9Contact {
   quarantineReason: string;
 }
 
+/**
+ * Call queue state machine:
+ *   queued → initiated_unconfirmed → outcome_required → attempted → completed
+ *   Any state → suppressed (wrong #, DNC, duplicate, skip)
+ */
 export type QueueStatus =
   | "queued"
   | "initiated_unconfirmed"
@@ -50,6 +57,7 @@ export type QueueStatus =
   | "completed"
   | "suppressed";
 
+/** An enqueued contact for a specific campaign, with priority and status. */
 export interface QueueItem {
   id: string;
   campaignId: string;
@@ -64,6 +72,7 @@ export interface QueueItem {
   manualOrder: number;
 }
 
+/** Outcome selected by the human operator after a call attempt. */
 export type CallOutcome =
   | "no_answer"
   | "left_voicemail"
@@ -88,6 +97,7 @@ export type CommitmentStatus =
 
 export type CallChannel = "facetime_audio" | "phone";
 
+/** A single call attempt — created on launch, resolved on outcome selection. */
 export interface CallAttempt {
   id: string;
   queueItemId: string;

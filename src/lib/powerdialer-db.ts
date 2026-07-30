@@ -168,8 +168,13 @@ async function clearStore(storeName: string): Promise<void> {
   });
 }
 
-// ── Contacts ──
-
+/**
+ * V9 Powerdialer IndexedDB interface.
+ * Database: `powerdialer-v9`, version 1.
+ * Stores: contacts, queueItems, callAttempts, campaigns, importReports.
+ * All writes are single-store puts; batch imports use replaceContact/QueueItem
+ * which wrapper multiple 500-record transactions.
+ */
 export const db = {
   // ── Import / Reset ──
   async replaceContacts(contacts: V9Contact[]): Promise<void> {

@@ -164,6 +164,13 @@ export interface ImportResult {
   campaigns: Campaign[];
 }
 
+/**
+ * Parse the canonical V9 Rolodex CSV (30 columns, ~30K rows).
+ * Produces deterministic contact IDs, normalized tiers, E.164 phones,
+ * quarantine flags, duplicate phone detection, and a QA report.
+ * Returns contacts, queue items, campaigns, and the import report
+ * for persistence via {@link persistImport}.
+ */
 export async function importV9CSV(text: string): Promise<ImportResult> {
   const { rows } = parseCSV(text);
   const importedAt = new Date().toISOString();
@@ -357,6 +364,11 @@ export async function importV9CSV(text: string): Promise<ImportResult> {
 
 // ── Persist Import ──
 
+/**
+ * Write an import result to IndexedDB. Clears all prior data,
+ * then batch-inserts contacts (500/tx), queue items, campaigns, and
+ * the import report. Call after {@link importV9CSV}.
+ */
 export async function persistImport(result: ImportResult): Promise<void> {
   await db.clearAllData();
   await db.replaceContacts(result.contacts);
@@ -369,6 +381,11 @@ export async function persistImport(result: ImportResult): Promise<void> {
 
 // ── Export Helpers ──
 
+/**
+ * Export all call attempts as PROJECT_PLANE_JANE_POWERDIALER_CALL_LOG CSV
+ * with the documented 22-column schema. Joins contact and campaign data,
+ * and numbers attempts per contact chronologically.
+ */
 export function exportCallLogCSV(
   attempts: CallAttempt[],
   contacts: V9Contact[],
@@ -432,6 +449,10 @@ export function exportCallLogCSV(
   return lines.join("\n");
 }
 
+/**
+ * Export all call attempts as enriched JSON with full contact and campaign
+ * data joined in. Suitable for programmatic processing.
+ */
 export function exportCallLogJSON(
   attempts: CallAttempt[],
   contacts: V9Contact[],
