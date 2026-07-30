@@ -46,7 +46,9 @@ function ExportPage() {
     const a = document.createElement("a");
     a.href = url;
     a.download = `PROJECT_PLANE_JANE_POWERDIALER_CALL_LOG_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.csv`;
+    document.body.appendChild(a);
     a.click();
+    a.remove();
     URL.revokeObjectURL(url);
     toast.success("CSV downloaded");
   };
@@ -58,7 +60,9 @@ function ExportPage() {
     const a = document.createElement("a");
     a.href = url;
     a.download = `POWERDIALER_CALL_LOG_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.json`;
+    document.body.appendChild(a);
     a.click();
+    a.remove();
     URL.revokeObjectURL(url);
     toast.success("JSON downloaded");
   };
@@ -164,7 +168,7 @@ function ExportPage() {
               <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
                 CSV schema
               </p>
-              <p className="mt-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
+              <p className="mt-2 break-all font-mono text-[10px] leading-relaxed text-muted-foreground">
                 attempt_id,logged_at,called_by,campaign_id,source_board,
                 contact_id,contact_name,tier,email,phone_e164,company,title,
                 attempt_number,channel,outcome,next_step,next_step_due,

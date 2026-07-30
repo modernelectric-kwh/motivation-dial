@@ -1,7 +1,7 @@
 // ── Powerdialer Landing / Dashboard ──
 // Shows tier counts, import status, active campaign, and quick-start.
 
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { db } from "@/lib/powerdialer-db";
 import type { ImportReport, Campaign, V9Tier } from "@/lib/powerdialer-types";
@@ -28,6 +28,7 @@ const TIER_LABELS: Record<V9Tier, { label: string; color: string }> = {
 const TIER_ORDER: V9Tier[] = ["inner_circle", "warm", "close", "cold"];
 
 function PowerdialerHome() {
+  const isIndex = useRouterState({ select: (s) => s.location.pathname === "/powerdialer" });
   const nav = useNavigate();
   const [loading, setLoading] = useState(true);
   const [report, setReport] = useState<ImportReport | null>(null);
@@ -57,6 +58,8 @@ function PowerdialerHome() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  if (!isIndex) return <Outlet />;
 
   if (loading) {
     return (
