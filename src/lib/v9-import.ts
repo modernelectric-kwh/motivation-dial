@@ -83,6 +83,7 @@ function parseCSVLine(line: string): string[] {
   const fields: string[] = [];
   let current = "";
   let inQuotes = false;
+  let fieldWasQuoted = false;
   for (let i = 0; i < line.length; i++) {
     const ch = line[i];
     if (inQuotes) {
@@ -91,21 +92,30 @@ function parseCSVLine(line: string): string[] {
         i++;
       } else if (ch === '"') {
         inQuotes = false;
+        // Field was fully quoted — emit without trimming
+        fields.push(current);
+        current = "";
+        fieldWasQuoted = false;
+        // Consume trailing whitespace and comma after closing quote
+        while (line[i + 1] === " ") i++;
+        if (line[i + 1] === ",") i++;
       } else {
         current += ch;
       }
     } else {
       if (ch === '"') {
         inQuotes = true;
+        fieldWasQuoted = true;
       } else if (ch === ",") {
-        fields.push(current.trim());
+        fields.push(fieldWasQuoted ? current : current.trim());
         current = "";
+        fieldWasQuoted = false;
       } else {
         current += ch;
       }
     }
   }
-  fields.push(current.trim());
+  fields.push(fieldWasQuoted ? current : current.trim());
   return fields;
 }
 
@@ -114,7 +124,7 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
   const lines = clean.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return { headers: [], rows: [] };
 
-  const headers = parseCSVLine(lines[0]).map((h) => h.trim());
+  const headers = parseCSVLine(lines[0]);
   const rows: Record<string, string>[] = [];
 
   for (let i = 1; i < lines.length; i++) {

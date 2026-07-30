@@ -16,10 +16,11 @@ export const Route = createFileRoute("/powerdialer/queue")({
   component: QueuePage,
 });
 
-const TIER_COLORS: Record<string, string> = {
+const TIER_COLORS: Record<V9Tier, string> = {
   inner_circle: "border-amber-500/30 text-amber-400",
   close: "border-blue-500/30 text-blue-400",
   warm: "border-emerald-500/30 text-emerald-400",
+  cold: "border-zinc-500/30 text-zinc-400",
 };
 
 const STATUS_COLORS: Record<QueueStatus, string> = {

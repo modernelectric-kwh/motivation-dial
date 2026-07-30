@@ -3,14 +3,13 @@
 // FaceTime Audio + Phone launch. Manual outcome logging only.
 // No autonomous dialing. Each launch = initiated_unconfirmed.
 
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
 import { db } from "@/lib/powerdialer-db";
 import type {
   V9Contact,
   QueueItem,
   CallAttempt,
-  Campaign,
   CallOutcome,
   CommitmentStatus,
   CallChannel,
@@ -63,11 +62,9 @@ const TIER_BADGES: Record<V9Tier, string> = {
 };
 
 function PowerdialerCall() {
-  const nav = useNavigate();
   const [loading, setLoading] = useState(true);
   const [contacts, setContacts] = useState<V9Contact[]>([]);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
-  const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [attempts, setAttempts] = useState<CallAttempt[]>([]);
 
@@ -86,10 +83,8 @@ function PowerdialerCall() {
     Promise.all([
       db.getAllContacts(),
       db.getAllQueueItems(),
-      db.getCampaign("v9_relationship_calls"),
       db.getAllCallAttempts(),
-    ]).then(([allContacts, allItems, cam, atts]) => {
-      setCampaign(cam ?? null);
+    ]).then(([allContacts, allItems, atts]) => {
       setAttempts(atts);
 
       // Filter to active queue items for the V9 relationship campaign
@@ -368,7 +363,7 @@ function PowerdialerCall() {
         (a) =>
           a.phoneUsed === contact.phone &&
           a.contactId !== contact.id &&
-          (a.outcome === "wrong_number" || a.outcome === "do_not_call"),
+          (a.outcome === "wrong_number" || a.outcome === "do_not_call" || a.outcome === "duplicate"),
       )
     : false;
 

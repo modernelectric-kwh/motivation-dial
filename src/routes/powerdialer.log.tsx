@@ -68,7 +68,7 @@ function CallLog() {
       const today = new Date().toDateString();
       return attempts.filter((a) => new Date(a.initiatedAt).toDateString() === today);
     }
-    if (filter === "unconfirmed") return attempts.filter((a) => !a.loggedAt);
+    if (filter === "unconfirmed") return attempts.filter((a) => a.outcome === null);
     return attempts.filter((a) => a.outcome === filter);
   }, [attempts, filter]);
 
