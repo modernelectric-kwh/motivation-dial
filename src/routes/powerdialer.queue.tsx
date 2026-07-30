@@ -4,7 +4,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { db } from "@/lib/powerdialer-db";
-import type { V9Contact, QueueItem, V9Tier } from "@/lib/powerdialer-types";
+import type { V9Contact, QueueItem, V9Tier, QueueStatus } from "@/lib/powerdialer-types";
 
 export const Route = createFileRoute("/powerdialer/queue")({
   head: () => ({
@@ -22,7 +22,7 @@ const TIER_COLORS: Record<string, string> = {
   warm: "border-emerald-500/30 text-emerald-400",
 };
 
-const STATUS_COLORS: Record<string, string> = {
+const STATUS_COLORS: Record<QueueStatus, string> = {
   queued: "text-zinc-400",
   initiated_unconfirmed: "text-amber-400",
   outcome_required: "text-amber-400",

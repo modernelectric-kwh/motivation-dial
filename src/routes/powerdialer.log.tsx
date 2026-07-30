@@ -16,7 +16,7 @@ export const Route = createFileRoute("/powerdialer/log")({
   component: CallLog,
 });
 
-const OUTCOME_COLORS: Record<string, string> = {
+const OUTCOME_COLORS: Record<CallOutcome, string> = {
   connected: "text-emerald-400",
   left_voicemail: "text-blue-400",
   no_answer: "text-zinc-400",
@@ -32,7 +32,7 @@ const OUTCOME_COLORS: Record<string, string> = {
   intro_made: "text-emerald-400",
 };
 
-const COMMITMENT_COLORS: Record<string, string> = {
+const COMMITMENT_COLORS: Record<CommitmentStatus, string> = {
   soft_yes: "text-amber-400",
   yes: "text-emerald-400",
   no: "text-zinc-500",

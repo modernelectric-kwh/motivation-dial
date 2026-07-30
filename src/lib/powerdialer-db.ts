@@ -237,4 +237,7 @@ export const db = {
     )[0];
   },
   saveImportReport: (report: ImportReport) => putOne(STORES.importReports, report),
+
+  // ── Lifecycle ──
+  close: () => closeDB(),
 };

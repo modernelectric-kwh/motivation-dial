@@ -383,11 +383,27 @@ export function exportCallLogCSV(
   }
 
   const lines: string[] = [headers.join(",")];
+
+  // Precompute attempt numbers per contact (avoids O(n²) inside the loop)
+  const attemptsByContact = new Map<string, CallAttempt[]>();
+  for (const a of attempts) {
+    const list = attemptsByContact.get(a.contactId);
+    if (list) list.push(a);
+    else attemptsByContact.set(a.contactId, [a]);
+  }
+
   for (const a of attempts) {
     const c = contactMap.get(a.contactId);
     const cam = campaignMap.get(a.campaignId);
-    const contactAttempts = attempts.filter((x) => x.contactId === a.contactId);
-    const attemptNum = contactAttempts.findIndex((x) => x.id === a.id) + 1;
+    const contactAttempts = attemptsByContact.get(a.contactId)!;
+    const attemptNum =
+      contactAttempts
+        .slice()
+        .sort(
+          (x, y) =>
+            new Date(x.initiatedAt).getTime() - new Date(y.initiatedAt).getTime(),
+        )
+        .findIndex((x) => x.id === a.id) + 1;
 
     lines.push([
       esc(a.id), esc(a.loggedAt || a.initiatedAt), esc(a.calledBy),

@@ -14,6 +14,7 @@ import type {
   CallOutcome,
   CommitmentStatus,
   CallChannel,
+  V9Tier,
 } from "@/lib/powerdialer-types";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
@@ -38,10 +39,12 @@ const OUTCOMES: Array<{ value: CallOutcome; label: string }> = [
   { value: "text_requested", label: "Text OK" },
   { value: "email_requested", label: "Email OK" },
   { value: "declined", label: "Declined" },
+  { value: "intro_offered", label: "Intro Offered" },
+  { value: "intro_made", label: "Intro Made" },
   { value: "wrong_number", label: "Wrong #" },
   { value: "do_not_call", label: "DNC" },
   { value: "duplicate", label: "Duplicate" },
-  { value: "skip_for_now", label: "Skip" },
+  { value: "skip_for_now", label: "Skip (re-queue)" },
 ];
 
 const COMMITMENTS: Array<{ value: CommitmentStatus; label: string }> = [
@@ -52,10 +55,11 @@ const COMMITMENTS: Array<{ value: CommitmentStatus; label: string }> = [
   { value: "needs_follow_up", label: "Needs Follow-Up" },
 ];
 
-const TIER_BADGES: Record<string, string> = {
+const TIER_BADGES: Record<V9Tier, string> = {
   inner_circle: "bg-amber-500/20 text-amber-400 border-amber-500/30",
   close: "bg-blue-500/20 text-blue-400 border-blue-500/30",
   warm: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+  cold: "bg-zinc-500/20 text-zinc-400 border-zinc-500/30",
 };
 
 function PowerdialerCall() {
@@ -211,9 +215,12 @@ function PowerdialerCall() {
       return;
     }
 
-    // Find the latest unlogged attempt for THIS contact
+    // Find the latest unresolved attempt for THIS contact.
+    // An attempt is unresolved if outcome is still null — this covers both
+    // freshly launched attempts (loggedAt=null) and deferred ones from
+    // "Log later" (loggedAt set but outcome=null).
     const contactAttemptsSorted = attempts
-      .filter((a) => a.contactId === contact.id && !a.loggedAt)
+      .filter((a) => a.contactId === contact.id && a.outcome === null)
       .sort(
         (a, b) =>
           new Date(b.initiatedAt).getTime() - new Date(a.initiatedAt).getTime(),
@@ -266,6 +273,10 @@ function PowerdialerCall() {
     setShowOutcomePanel(false);
 
     if (newStatus === "suppressed") {
+      advance();
+    } else if (newStatus !== "queued") {
+      // For normal outcomes (attempted), advance to next contact.
+      // skip_for_now re-queues, so don't advance — same contact comes back later.
       advance();
     }
   };
