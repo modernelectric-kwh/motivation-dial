@@ -390,7 +390,7 @@ function PowerdialerCall() {
           All eligible contacts have been processed.
         </p>
         <Link
-          to="/powerdialer"
+          to="/"
           className="mt-6 rounded-lg bg-primary px-5 py-2 font-medium text-primary-foreground"
         >
           Back to Dashboard
@@ -407,7 +407,7 @@ function PowerdialerCall() {
           You've reached the end of the queue.
         </p>
         <Link
-          to="/powerdialer"
+          to="/"
           className="mt-6 rounded-lg bg-primary px-5 py-2 font-medium text-primary-foreground"
         >
           Back to Dashboard
@@ -423,7 +423,7 @@ function PowerdialerCall() {
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-border bg-background/90 px-5 py-4 backdrop-blur">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <Link to="/powerdialer">← Dashboard</Link>
+          <Link to="/">← Memory Center</Link>
           <span className="uppercase tracking-[0.2em]">
             {currentIdx + 1} / {contacts.length}
           </span>

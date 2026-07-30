@@ -86,8 +86,8 @@ function ExportPage() {
       <Toaster theme="dark" richColors position="top-center" />
 
       <header className="border-b border-border bg-background/90 px-5 py-4 backdrop-blur">
-        <Link to="/powerdialer" className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-          ← Dashboard
+        <Link to="/" className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+          ← Memory Center
         </Link>
         <h1 className="mt-1 font-serif text-2xl">Export Call Log</h1>
       </header>

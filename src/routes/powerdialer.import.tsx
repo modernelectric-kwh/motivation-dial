@@ -80,8 +80,8 @@ function ImportPage() {
       <Toaster theme="dark" richColors position="top-center" />
 
       <header className="border-b border-border bg-background/90 px-5 py-4 backdrop-blur">
-        <Link to="/powerdialer" className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-          ← Dashboard
+        <Link to="/" className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+          ← Memory Center
         </Link>
         <h1 className="mt-1 font-serif text-2xl">Import V9 Rolodex</h1>
         <p className="text-xs text-muted-foreground">
@@ -276,10 +276,10 @@ function ImportPage() {
             {/* Actions */}
             <div className="flex gap-3">
               <Link
-                to="/powerdialer"
+                to="/"
                 className="flex-1 rounded-xl bg-primary py-3 text-center text-sm font-medium text-primary-foreground"
               >
-                Go to Dashboard →
+                Go to Memory Center →
               </Link>
               <button
                 onClick={handleReset}

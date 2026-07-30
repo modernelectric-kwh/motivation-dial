@@ -89,8 +89,8 @@ function QueuePage() {
     <div className="min-h-screen pb-20">
       <header className="border-b border-border bg-background/90 px-5 py-4 backdrop-blur">
         <div className="flex items-center justify-between">
-          <Link to="/powerdialer" className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-            ← Dashboard
+          <Link to="/" className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            ← Memory Center
           </Link>
           <Link
             to="/powerdialer/call"
