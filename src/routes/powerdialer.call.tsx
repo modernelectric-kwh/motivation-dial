@@ -125,6 +125,19 @@ function PowerdialerCall() {
     [contact, attempts],
   );
 
+  const duplicatePhone = useMemo(
+    () =>
+      contact?.phone
+        ? attempts.some(
+            (a) =>
+              a.phoneUsed === contact.phone &&
+              a.contactId !== contact.id &&
+              (a.outcome === "wrong_number" || a.outcome === "do_not_call" || a.outcome === "duplicate"),
+          )
+        : false,
+    [contact?.phone, attempts],
+  );
+
   const advance = () => {
     const next = currentIdx + 1;
     if (next >= contacts.length) {
@@ -402,19 +415,6 @@ function PowerdialerCall() {
       </div>
     );
   }
-
-  const duplicatePhone = useMemo(
-    () =>
-      contact.phone
-        ? attempts.some(
-            (a) =>
-              a.phoneUsed === contact.phone &&
-              a.contactId !== contact.id &&
-              (a.outcome === "wrong_number" || a.outcome === "do_not_call" || a.outcome === "duplicate"),
-          )
-        : false,
-    [contact.phone, attempts],
-  );
 
   return (
     <div className="min-h-screen pb-40">
