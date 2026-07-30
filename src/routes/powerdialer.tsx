@@ -4,7 +4,8 @@
 import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { db } from "@/lib/powerdialer-db";
-import type { ImportReport, Campaign, V9Tier } from "@/lib/powerdialer-types";
+import type { ImportReport, Campaign } from "@/lib/powerdialer-types";
+import { TIER_ORDER, TIER_META } from "@/lib/powerdialer-constants";
 
 export const Route = createFileRoute("/powerdialer")({
   head: () => ({
@@ -17,15 +18,6 @@ export const Route = createFileRoute("/powerdialer")({
   }),
   component: PowerdialerHome,
 });
-
-const TIER_LABELS: Record<V9Tier, { label: string; color: string }> = {
-  inner_circle: { label: "Inner Circle", color: "text-amber-400" },
-  close: { label: "Close", color: "text-blue-400" },
-  warm: { label: "Warm", color: "text-emerald-400" },
-  cold: { label: "Cold", color: "text-zinc-500" },
-};
-
-const TIER_ORDER: V9Tier[] = ["inner_circle", "warm", "close", "cold"];
 
 function PowerdialerHome() {
   const isIndex = useRouterState({ select: (s) => s.location.pathname === "/powerdialer" });
@@ -55,7 +47,7 @@ function PowerdialerHome() {
         // Tier counts from queue
         setQueueCounts(counts);
       })
-      .catch(() => {})
+      .catch((err) => console.error("Powerdialer load failed:", err))
       .finally(() => setLoading(false));
   }, []);
 
@@ -189,11 +181,11 @@ function PowerdialerHome() {
                 key={tier}
                 className="rounded-xl border border-border bg-card p-3 text-center"
               >
-                <p className={`text-lg font-bold ${TIER_LABELS[tier].color}`}>
+                <p className={`text-lg font-bold ${TIER_META[tier].color}`}>
                   {report.tierCounts[tier].toLocaleString()}
                 </p>
                 <p className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  {TIER_LABELS[tier].label}
+                  {TIER_META[tier].label}
                 </p>
               </div>
             ))}

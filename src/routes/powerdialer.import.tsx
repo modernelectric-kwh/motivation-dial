@@ -28,7 +28,7 @@ function ImportPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    db.getLatestImportReport().then(setExistingReport).catch(() => {});
+    db.getLatestImportReport().then((r) => setExistingReport(r ?? null)).catch(() => {});
   }, []);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {

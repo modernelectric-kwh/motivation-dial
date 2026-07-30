@@ -2,7 +2,7 @@
 // Export call log as CSV or JSON.
 
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { db } from "@/lib/powerdialer-db";
 import { exportCallLogCSV, exportCallLogJSON } from "@/lib/v9-import";
 import type { CallAttempt, V9Contact, Campaign } from "@/lib/powerdialer-types";
@@ -40,40 +40,46 @@ function ExportPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const downloadCSV = () => {
-    const csv = exportCallLogCSV(attempts, contacts, campaigns);
-    const blob = new Blob([csv], { type: "text/csv" });
+  const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+
+  const downloadFile = (content: string, filename: string, mimeType: string, label: string) => {
+    const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `PROJECT_PLANE_JANE_POWERDIALER_CALL_LOG_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.csv`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    toast.success("CSV downloaded");
+    toast.success(`${label} downloaded`);
   };
 
-  const downloadJSON = () => {
-    const json = exportCallLogJSON(attempts, contacts);
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `POWERDIALER_CALL_LOG_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    toast.success("JSON downloaded");
-  };
+  const downloadCSV = () =>
+    downloadFile(
+      exportCallLogCSV(attempts, contacts, campaigns),
+      `PROJECT_PLANE_JANE_POWERDIALER_CALL_LOG_${dateStamp}.csv`,
+      "text/csv",
+      "CSV",
+    );
 
-  const outcomes = new Map<string, number>();
-  for (const a of attempts) {
-    if (a.outcome) {
-      outcomes.set(a.outcome, (outcomes.get(a.outcome) || 0) + 1);
+  const downloadJSON = () =>
+    downloadFile(
+      exportCallLogJSON(attempts, contacts),
+      `POWERDIALER_CALL_LOG_${dateStamp}.json`,
+      "application/json",
+      "JSON",
+    );
+
+  const outcomes = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of attempts) {
+      if (a.outcome) {
+        m.set(a.outcome, (m.get(a.outcome) || 0) + 1);
+      }
     }
-  }
+    return m;
+  }, [attempts]);
 
   return (
     <div className="min-h-screen pb-20">

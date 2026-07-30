@@ -4,7 +4,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { db } from "@/lib/powerdialer-db";
-import type { V9Contact, QueueItem, V9Tier, QueueStatus } from "@/lib/powerdialer-types";
+import type { V9Contact, QueueItem, V9Tier } from "@/lib/powerdialer-types";
+import { STATUS_COLORS, TIER_META } from "@/lib/powerdialer-constants";
 
 export const Route = createFileRoute("/powerdialer/queue")({
   head: () => ({
@@ -15,22 +16,6 @@ export const Route = createFileRoute("/powerdialer/queue")({
   }),
   component: QueuePage,
 });
-
-const TIER_COLORS: Record<V9Tier, string> = {
-  inner_circle: "border-amber-500/30 text-amber-400",
-  close: "border-blue-500/30 text-blue-400",
-  warm: "border-emerald-500/30 text-emerald-400",
-  cold: "border-zinc-500/30 text-zinc-400",
-};
-
-const STATUS_COLORS: Record<QueueStatus, string> = {
-  queued: "text-zinc-400",
-  initiated_unconfirmed: "text-amber-400",
-  outcome_required: "text-amber-400",
-  attempted: "text-emerald-400",
-  completed: "text-emerald-400",
-  suppressed: "text-red-400",
-};
 
 function QueuePage() {
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
@@ -194,7 +179,7 @@ function QueuePage() {
                 {/* Tier badge */}
                 <span
                   className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-medium uppercase ${
-                    TIER_COLORS[contact.tier] || "border-border text-muted-foreground"
+                    TIER_META[contact.tier]?.badge || "border-border text-muted-foreground"
                   }`}
                 >
                   {contact.tier.replace("_", "")}

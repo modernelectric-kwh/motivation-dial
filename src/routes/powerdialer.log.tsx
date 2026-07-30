@@ -4,7 +4,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { db } from "@/lib/powerdialer-db";
-import type { CallAttempt, V9Contact, CallOutcome, CommitmentStatus } from "@/lib/powerdialer-types";
+import type { CallAttempt, V9Contact, CallOutcome } from "@/lib/powerdialer-types";
+import { OUTCOME_COLORS, COMMITMENT_COLORS } from "@/lib/powerdialer-constants";
 
 export const Route = createFileRoute("/powerdialer/log")({
   head: () => ({
@@ -15,30 +16,6 @@ export const Route = createFileRoute("/powerdialer/log")({
   }),
   component: CallLog,
 });
-
-const OUTCOME_COLORS: Record<CallOutcome, string> = {
-  connected: "text-emerald-400",
-  left_voicemail: "text-blue-400",
-  no_answer: "text-zinc-400",
-  callback_requested: "text-amber-400",
-  text_requested: "text-sky-400",
-  email_requested: "text-purple-400",
-  wrong_number: "text-red-400",
-  do_not_call: "text-red-400",
-  declined: "text-orange-400",
-  duplicate: "text-red-400",
-  skip_for_now: "text-zinc-500",
-  intro_offered: "text-emerald-400",
-  intro_made: "text-emerald-400",
-};
-
-const COMMITMENT_COLORS: Record<CommitmentStatus, string> = {
-  soft_yes: "text-amber-400",
-  yes: "text-emerald-400",
-  no: "text-zinc-500",
-  needs_follow_up: "text-blue-400",
-  not_discussed: "text-zinc-600",
-};
 
 function CallLog() {
   const [attempts, setAttempts] = useState<CallAttempt[]>([]);
@@ -72,12 +49,15 @@ function CallLog() {
     return attempts.filter((a) => a.outcome === filter);
   }, [attempts, filter]);
 
-  const outcomes = new Map<string, number>();
-  for (const a of attempts) {
-    if (a.outcome) {
-      outcomes.set(a.outcome, (outcomes.get(a.outcome) || 0) + 1);
+  const outcomes = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of attempts) {
+      if (a.outcome) {
+        m.set(a.outcome, (m.get(a.outcome) || 0) + 1);
+      }
     }
-  }
+    return m;
+  }, [attempts]);
 
   if (loading) {
     return (

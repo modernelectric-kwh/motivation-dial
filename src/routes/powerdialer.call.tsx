@@ -13,8 +13,8 @@ import type {
   CallOutcome,
   CommitmentStatus,
   CallChannel,
-  V9Tier,
 } from "@/lib/powerdialer-types";
+import { TIER_META } from "@/lib/powerdialer-constants";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 
@@ -54,12 +54,14 @@ const COMMITMENTS: Array<{ value: CommitmentStatus; label: string }> = [
   { value: "needs_follow_up", label: "Needs Follow-Up" },
 ];
 
-const TIER_BADGES: Record<V9Tier, string> = {
-  inner_circle: "bg-amber-500/20 text-amber-400 border-amber-500/30",
-  close: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  warm: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-  cold: "bg-zinc-500/20 text-zinc-400 border-zinc-500/30",
-};
+/** Return the most recent unresolved attempt for a contact, or null. */
+function getLatestUnresolvedAttempt(attempts: CallAttempt[], contactId: string): CallAttempt | null {
+  return attempts
+    .filter((a) => a.contactId === contactId && a.outcome === null)
+    .sort(
+      (a, b) => new Date(b.initiatedAt).getTime() - new Date(a.initiatedAt).getTime(),
+    )[0] ?? null;
+}
 
 function PowerdialerCall() {
   const [loading, setLoading] = useState(true);
@@ -92,7 +94,8 @@ function PowerdialerCall() {
         (qi) =>
           qi.campaignId === "v9_relationship_calls" &&
           qi.queueStatus !== "suppressed" &&
-          qi.queueStatus !== "completed",
+          qi.queueStatus !== "completed" &&
+          qi.queueStatus !== "attempted",
       );
 
       // Sort by priority (ascending)
@@ -189,12 +192,11 @@ function PowerdialerCall() {
           ? "FaceTime Audio launched — outcome unconfirmed"
           : "Phone launched — outcome unconfirmed",
       );
+      // Open dialer only after DB write succeeds
+      window.location.href = url;
     }).catch(() => {
       toast.error("Failed to record attempt");
     });
-
-    // Open the link
-    window.location.href = url;
   };
 
   // ── Save outcome ──
@@ -210,17 +212,7 @@ function PowerdialerCall() {
       return;
     }
 
-    // Find the latest unresolved attempt for THIS contact.
-    // An attempt is unresolved if outcome is still null — this covers both
-    // freshly launched attempts (loggedAt=null) and deferred ones from
-    // "Log later" (loggedAt set but outcome=null).
-    const contactAttemptsSorted = attempts
-      .filter((a) => a.contactId === contact.id && a.outcome === null)
-      .sort(
-        (a, b) =>
-          new Date(b.initiatedAt).getTime() - new Date(a.initiatedAt).getTime(),
-      );
-    const latestAttempt = contactAttemptsSorted[0];
+    const latestAttempt = getLatestUnresolvedAttempt(attempts, contact.id);
     if (!latestAttempt) {
       toast.error("No unconfirmed call attempt to log");
       return;
@@ -329,6 +321,46 @@ function PowerdialerCall() {
     advance();
   };
 
+  // ── Defer outcome (Log later) ──
+  const deferOutcome = async () => {
+    if (!queueItem || !contact) return;
+    setShowOutcomePanel(false);
+
+    const latestAttempt = getLatestUnresolvedAttempt(attempts, contact.id);
+    const updatedQI: QueueItem = {
+      ...queueItem,
+      queueStatus: "outcome_required",
+    };
+
+    const deferredAttempt: CallAttempt | null = latestAttempt
+      ? {
+          ...latestAttempt,
+          loggedAt: new Date().toISOString(),
+          outcome: null,
+          notes: "Deferred — outcome pending",
+        }
+      : null;
+
+    const ops: Promise<unknown>[] = [db.updateQueueItem(updatedQI)];
+    if (deferredAttempt) ops.push(db.updateCallAttempt(deferredAttempt));
+
+    try {
+      await Promise.all(ops);
+    } catch {
+      toast.error("Failed to defer call");
+      return;
+    }
+
+    if (deferredAttempt) {
+      setAttempts((prev) =>
+        prev.map((a) => (a.id === deferredAttempt.id ? deferredAttempt : a)),
+      );
+    }
+    setQueueItems((prev) =>
+      prev.map((qi) => (qi.id === queueItem.id ? updatedQI : qi)),
+    );
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -371,14 +403,18 @@ function PowerdialerCall() {
     );
   }
 
-  const duplicatePhone = contact.phone
-    ? attempts.some(
-        (a) =>
-          a.phoneUsed === contact.phone &&
-          a.contactId !== contact.id &&
-          (a.outcome === "wrong_number" || a.outcome === "do_not_call" || a.outcome === "duplicate"),
-      )
-    : false;
+  const duplicatePhone = useMemo(
+    () =>
+      contact.phone
+        ? attempts.some(
+            (a) =>
+              a.phoneUsed === contact.phone &&
+              a.contactId !== contact.id &&
+              (a.outcome === "wrong_number" || a.outcome === "do_not_call" || a.outcome === "duplicate"),
+          )
+        : false,
+    [contact.phone, attempts],
+  );
 
   return (
     <div className="min-h-screen pb-40">
@@ -405,7 +441,7 @@ function PowerdialerCall() {
           <div className="flex items-center gap-2">
             <span
               className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase ${
-                TIER_BADGES[contact.tier] || "border-border text-muted-foreground"
+                TIER_META[contact.tier]?.badge || "border-border text-muted-foreground"
               }`}
             >
               {contact.tier.replace("_", " ")}
@@ -646,51 +682,7 @@ function PowerdialerCall() {
           {/* Save */}
           <div className="mt-4 flex gap-2">
             <button
-              onClick={async () => {
-                setShowOutcomePanel(false);
-                if (queueItem) {
-                  // Find the latest unlogged attempt for this contact and mark it
-                  // as deferred to prevent orphaned CallAttempt records.
-                  const contactAttemptsSorted = attempts
-                    .filter((a) => a.contactId === contact!.id && !a.loggedAt)
-                    .sort(
-                      (a, b) =>
-                        new Date(b.initiatedAt).getTime() - new Date(a.initiatedAt).getTime(),
-                    );
-                  const latestAttempt = contactAttemptsSorted[0];
-
-                  const updatedQI: QueueItem = {
-                    ...queueItem,
-                    queueStatus: "outcome_required",
-                  };
-
-                  const deferredAttempt: CallAttempt | null = latestAttempt
-                    ? {
-                        ...latestAttempt,
-                        loggedAt: new Date().toISOString(),
-                        outcome: null,
-                        notes: "Deferred — outcome pending",
-                      }
-                    : null;
-
-                  const ops: Promise<unknown>[] = [db.updateQueueItem(updatedQI)];
-                  if (deferredAttempt) ops.push(db.updateCallAttempt(deferredAttempt));
-
-                  await Promise.all(ops).catch(() => {
-                    toast.error("Failed to defer call");
-                    return;
-                  });
-
-                  if (deferredAttempt) {
-                    setAttempts((prev) =>
-                      prev.map((a) => (a.id === deferredAttempt.id ? deferredAttempt : a)),
-                    );
-                  }
-                  setQueueItems((prev) =>
-                    prev.map((qi) => (qi.id === queueItem.id ? updatedQI : qi)),
-                  );
-                }
-              }}
+              onClick={() => deferOutcome()}
               className="flex-1 rounded-lg border border-border py-3 text-sm text-muted-foreground"
             >
               Log later

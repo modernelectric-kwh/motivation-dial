@@ -115,7 +115,10 @@ function parseCSVLine(line: string): string[] {
       }
     }
   }
-  fields.push(fieldWasQuoted ? current : current.trim());
+  // Only push the final field if it has content or was explicitly quoted (RFC 4180)
+  if (current !== "" || fieldWasQuoted) {
+    fields.push(fieldWasQuoted ? current : current.trim());
+  }
   return fields;
 }
 
@@ -293,6 +296,10 @@ export async function importV9CSV(text: string): Promise<ImportResult> {
       createdAt: importedAt,
       status: "active",
     },
+    // NOTE: This campaign is created for future use — queue items are not
+    // auto-assigned here (all queue items go to v9_relationship_calls).
+    // A manual "Assign to Verified Intro Node campaign" action can be added
+    // to the queue manager or call screen later.
     {
       id: "verified_intro_node_calls",
       name: "Verified Intro Node Calls",
@@ -413,7 +420,7 @@ export function exportCallLogCSV(
 
   const lines: string[] = [headers.join(",")];
 
-  // Precompute attempt numbers per contact (avoids O(n²) inside the loop)
+  // Group attempts by contact for numbering
   const attemptsByContact = new Map<string, CallAttempt[]>();
   for (const a of attempts) {
     const list = attemptsByContact.get(a.contactId);
@@ -421,18 +428,22 @@ export function exportCallLogCSV(
     else attemptsByContact.set(a.contactId, [a]);
   }
 
+  // Pre-sort and compute attempt numbers per contact group once (avoid O(n² log n))
+  const attemptNumMap = new Map<string, number>();
+  for (const [contactId, contactAttempts] of attemptsByContact) {
+    const sorted = [...contactAttempts].sort(
+      (x, y) =>
+        new Date(x.initiatedAt).getTime() - new Date(y.initiatedAt).getTime(),
+    );
+    for (let i = 0; i < sorted.length; i++) {
+      attemptNumMap.set(sorted[i].id, i + 1);
+    }
+  }
+
   for (const a of attempts) {
     const c = contactMap.get(a.contactId);
     const cam = campaignMap.get(a.campaignId);
-    const contactAttempts = attemptsByContact.get(a.contactId)!;
-    const attemptNum =
-      contactAttempts
-        .slice()
-        .sort(
-          (x, y) =>
-            new Date(x.initiatedAt).getTime() - new Date(y.initiatedAt).getTime(),
-        )
-        .findIndex((x) => x.id === a.id) + 1;
+    const attemptNum = attemptNumMap.get(a.id) ?? 1;
 
     lines.push([
       esc(a.id), esc(a.loggedAt || a.initiatedAt), esc(a.calledBy),
