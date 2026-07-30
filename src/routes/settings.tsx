@@ -2,10 +2,11 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { parseVCF, type Contact } from "@/lib/vcf";
-import { store, type ChatContext } from "@/lib/store";
-import { parseChatGPTExport, parseClaudeExport } from "@/lib/chat-import";
-import { saveVoicemailBlob, loadVoicemailBlob, clearVoicemailBlob } from "@/lib/vm-storage";
+import { store } from "@/lib/store";
+import { db } from "@/lib/powerdialer-db";
 import { checkSyncStatus } from "@/lib/enrichment.functions";
+import { saveVoicemailBlob, loadVoicemailBlob, clearVoicemailBlob } from "@/lib/vm-storage";
+import type { ImportReport } from "@/lib/powerdialer-types";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -26,10 +27,6 @@ function Settings() {
   const [companyMd, setCompanyMd] = useState("");
   const [notionDb, setNotionDb] = useState("");
   const [motivation, setMotivation] = useState("");
-  const [sync, setSync] = useState<{ notion: boolean; gcal: boolean; gmail: boolean } | null>(null);
-  const [chatgpt, setChatgpt] = useState<ChatContext | null>(null);
-  const [claude, setClaude] = useState<ChatContext | null>(null);
-  const [perplexity, setPerplexity] = useState<ChatContext | null>(null);
   const [vmScript, setVmScript] = useState("");
   const [vmHas, setVmHas] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -37,8 +34,8 @@ function Settings() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const [followupTemplate, setFollowupTemplate] = useState("");
-  const [calCom, setCalCom] = useState("");
-  const [dnc, setDnc] = useState<string[]>([]);
+  const [sync, setSync] = useState<{ notion: boolean; gcal: boolean; gmail: boolean } | null>(null);
+  const [v9Report, setV9Report] = useState<ImportReport | null>(null);
   const checkFn = useServerFn(checkSyncStatus);
 
   useEffect(() => {
@@ -46,17 +43,13 @@ function Settings() {
     setCompanyMd(store.getCompanyMd());
     setNotionDb(store.getNotionDb());
     setMotivation(store.getMotivation());
-    setChatgpt(store.getChatgpt());
-    setClaude(store.getClaude());
-    setPerplexity(store.getPerplexity());
     setVmScript(store.getVmScript());
     setFollowupTemplate(store.getFollowupTemplate());
-    setCalCom(store.getCalCom());
-    setDnc(store.getDNC());
     loadVoicemailBlob().then((b) => {
       setVmHas(!!b);
       if (b) setVmUrl(URL.createObjectURL(b));
     });
+    db.getLatestImportReport().then((r) => setV9Report(r ?? null));
     checkFn().then(setSync).catch(() => setSync({ notion: false, gcal: false, gmail: false }));
   }, []);
 
@@ -75,30 +68,6 @@ function Settings() {
     store.setCompanyMd(txt);
     setCompanyMd(txt);
     toast.success("Company context saved");
-  };
-
-  const onChatGPT = async (f: File) => {
-    try {
-      const txt = await f.text();
-      const parsed = parseChatGPTExport(txt);
-      store.setChatgpt(parsed);
-      setChatgpt(parsed);
-      toast.success(`Ingested ${parsed.entryCount} ChatGPT conversations`);
-    } catch (e) {
-      toast.error("Bad ChatGPT export", { description: (e as Error).message });
-    }
-  };
-
-  const onClaude = async (f: File) => {
-    try {
-      const txt = await f.text();
-      const parsed = parseClaudeExport(txt);
-      store.setClaude(parsed);
-      setClaude(parsed);
-      toast.success(`Ingested ${parsed.entryCount} Claude conversations`);
-    } catch (e) {
-      toast.error("Bad Claude export", { description: (e as Error).message });
-    }
   };
 
   const startRec = async () => {
@@ -152,13 +121,29 @@ function Settings() {
       <div className="space-y-6 px-5 py-6">
         <Section
           label="Contacts"
-          sub={`${contacts.length} loaded${contacts.length ? ` · queue starts at #${store.getQueueIdx() + 1}` : ""}`}
+          sub={
+            v9Report
+              ? `V9: ${v9Report.totalRows.toLocaleString()} rows · ${v9Report.callableCount.toLocaleString()} callable`
+              : contacts.length
+                ? `${contacts.length} loaded · queue starts at #${store.getQueueIdx() + 1}`
+                : "No contacts loaded"
+          }
         >
           <FileRow
             accept=".vcf,text/vcard"
-            label="Upload .vcf"
+            label={v9Report ? "Upload .vcf (replaces existing)" : "Upload .vcf"}
             onFile={onVcf}
           />
+          {v9Report && (
+            <div className="mt-3 grid grid-cols-4 gap-2 rounded-lg border border-border bg-card/40 p-3 text-center">
+              {(["inner_circle", "warm", "close", "cold"] as const).map((tier) => (
+                <div key={tier}>
+                  <p className="text-sm font-bold">{v9Report.tierCounts[tier].toLocaleString()}</p>
+                  <p className="text-[10px] uppercase text-muted-foreground">{tier.replace("_", " ")}</p>
+                </div>
+              ))}
+            </div>
+          )}
           {contacts.length > 0 && (
             <ul className="mt-3 max-h-48 overflow-y-auto rounded-lg border border-border bg-card/40 text-sm">
               {contacts.slice(0, 25).map((c) => (
@@ -186,42 +171,6 @@ function Settings() {
               {companyMd.length > 240 ? "…" : ""}
             </p>
           )}
-        </Section>
-
-        <Section label="AI chat context" sub="Export from ChatGPT / Claude and drop them here — Perplexity queries live per contact">
-          <div className="space-y-3">
-            <ChatSource
-              name="ChatGPT"
-              ctx={chatgpt}
-              accept=".json,application/json,.zip"
-              instructions="ChatGPT → Settings → Data controls → Export data. Unzip and upload conversations.json"
-              onFile={onChatGPT}
-              onClear={() => {
-                store.setChatgpt(null);
-                setChatgpt(null);
-              }}
-            />
-            <ChatSource
-              name="Claude"
-              ctx={claude}
-              accept=".json,application/json"
-              instructions="Claude → Settings → Privacy → Export data. Upload conversations.json"
-              onFile={onClaude}
-              onClear={() => {
-                store.setClaude(null);
-                setClaude(null);
-              }}
-            />
-            <div className="rounded-lg border border-border bg-card/40 p-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium">Perplexity</p>
-                <StatusChip label={perplexity ? "cached" : "live"} ok={true} />
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                No export needed. Queried live for every contact — 4-line brief with citations appears on the call screen.
-              </p>
-            </div>
-          </div>
         </Section>
 
         <Section
@@ -295,15 +244,6 @@ function Settings() {
           />
         </Section>
 
-        <Section label="Cal.com link" sub="Sent in the iMessage draft after a Send Placeholder">
-          <input
-            value={calCom}
-            onChange={(e) => setCalCom(e.target.value)}
-            onBlur={() => store.setCalCom(calCom.trim())}
-            className="w-full rounded-lg border border-border bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary"
-          />
-        </Section>
-
         <Section label="Motivation seed" sub="The narrow, high-conviction read the app riffs on">
           <textarea
             value={motivation}
@@ -324,71 +264,12 @@ function Settings() {
           </p>
         </Section>
 
-        <Section label="Do-not-call list" sub={`${dnc.length} numbers · skipped automatically`}>
-          {dnc.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Empty. Add from the call screen with the DNC button.</p>
-          ) : (
-            <ul className="max-h-40 overflow-y-auto rounded-lg border border-border bg-card/40 text-sm">
-              {dnc.map((p) => (
-                <li key={p} className="flex items-center justify-between border-b border-border/50 px-3 py-2 last:border-0">
-                  <span className="font-mono text-xs">{p}</span>
-                  <button
-                    onClick={() => {
-                      store.removeDNC(p);
-                      setDnc(store.getDNC());
-                    }}
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    remove
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
-
         <Section label="iPhone-only signals" sub="iMessage · WhatsApp · native call history">
           <p className="rounded-lg border border-dashed border-border bg-card/40 p-3 text-xs text-muted-foreground">
             Apple doesn't let web apps read these directly. Tap iMessage/WhatsApp on the call screen to open the native thread — POST-call notes capture what you talked about.
           </p>
         </Section>
       </div>
-    </div>
-  );
-}
-
-function ChatSource({
-  name,
-  ctx,
-  accept,
-  instructions,
-  onFile,
-  onClear,
-}: {
-  name: string;
-  ctx: ChatContext | null;
-  accept: string;
-  instructions: string;
-  onFile: (f: File) => void;
-  onClear: () => void;
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-card/40 p-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium">{name}</p>
-        <StatusChip label={ctx ? `${ctx.entryCount} chats` : "none"} ok={!!ctx} />
-      </div>
-      {!ctx ? (
-        <>
-          <p className="mt-1 text-xs text-muted-foreground">{instructions}</p>
-          <FileRow accept={accept} label={`Upload ${name} export`} onFile={onFile} compact />
-        </>
-      ) : (
-        <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-          <span>Updated {new Date(ctx.updatedAt).toLocaleString()}</span>
-          <button onClick={onClear} className="hover:text-foreground">Clear</button>
-        </div>
-      )}
     </div>
   );
 }
