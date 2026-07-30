@@ -117,6 +117,15 @@ function Index() {
           Motivation
         </Link>
       </div>
+
+      <div className="mx-auto max-w-md px-6 pb-10">
+        <Link
+          to="/powerdialer"
+          className="flex w-full items-center justify-center rounded-2xl border-2 border-amber-500/40 bg-gradient-to-r from-amber-500/10 to-emerald-500/10 px-4 py-4 text-center text-sm font-medium"
+        >
+          ⚡ Powerdialer — V9 Call Console
+        </Link>
+      </div>
     </div>
   );
 }
