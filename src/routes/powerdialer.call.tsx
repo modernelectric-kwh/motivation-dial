@@ -1,21 +1,17 @@
 // ── Powerdialer Call Screen ──
-// Queue-based calling: Inner Circle → Warm (Close optional).
-// FaceTime Audio + Phone launch. Manual outcome logging only.
-// No autonomous dialing. Each launch = initiated_unconfirmed.
+// Simplified: contact card + Start FaceTime Audio + outcome pills + follow-up row.
+// All manual, no autonomous dialing.
 
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { db } from "@/lib/powerdialer-db";
 import type {
   V9Contact,
   QueueItem,
   CallAttempt,
   CallOutcome,
-  CommitmentStatus,
-  CallChannel,
 } from "@/lib/powerdialer-types";
 import { TIER_META } from "@/lib/powerdialer-constants";
-import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/powerdialer/call")({
@@ -30,37 +26,44 @@ export const Route = createFileRoute("/powerdialer/call")({
   component: PowerdialerCall,
 });
 
-const OUTCOMES: Array<{ value: CallOutcome; label: string }> = [
-  { value: "no_answer", label: "No Answer" },
-  { value: "left_voicemail", label: "Left VM" },
-  { value: "connected", label: "Connected" },
-  { value: "callback_requested", label: "Callback" },
-  { value: "text_requested", label: "Text OK" },
-  { value: "email_requested", label: "Email OK" },
-  { value: "declined", label: "Declined" },
-  { value: "intro_offered", label: "Intro Offered" },
-  { value: "intro_made", label: "Intro Made" },
-  { value: "wrong_number", label: "Wrong #" },
-  { value: "do_not_call", label: "DNC" },
-  { value: "duplicate", label: "Duplicate" },
-  { value: "skip_for_now", label: "Skip (re-queue)" },
-];
+// ── Touch summary helpers ──
+function formatTouchSummary(c: V9Contact): string {
+  const parts: string[] = [];
+  if (c.lastInteraction) parts.push(`Last: ${c.lastInteraction}`);
+  if (c.emails > 0) parts.push(`${c.emails} email${c.emails !== 1 ? "s" : ""}`);
+  if (c.callsAnswered > 0) parts.push(`${c.callsAnswered} call${c.callsAnswered !== 1 ? "s" : ""}`);
+  if (c.texts > 0) parts.push(`${c.texts} text${c.texts !== 1 ? "s" : ""}`);
+  if (c.facetime > 0) parts.push(`${c.facetime} FaceTime`);
+  if (c.whatsapp > 0) parts.push(`${c.whatsapp} WhatsApp`);
+  if (c.granolaConfirmed > 0) parts.push("Granola ✓");
+  if (c.meetingsValidated > 0) parts.push(`${c.meetingsValidated} meeting${c.meetingsValidated !== 1 ? "s" : ""}`);
+  return parts.join(" · ") || "No prior touch history";
+}
 
-const COMMITMENTS: Array<{ value: CommitmentStatus; label: string }> = [
-  { value: "not_discussed", label: "Not Discussed" },
-  { value: "no", label: "No" },
-  { value: "soft_yes", label: "Soft Yes" },
-  { value: "yes", label: "Yes" },
-  { value: "needs_follow_up", label: "Needs Follow-Up" },
+function formatFullTouch(c: V9Contact): string {
+  const lines: string[] = [];
+  if (c.introNodes) lines.push(`Intros: ${c.introNodes}`);
+  if (c.meetingsRaw > 0) lines.push(`Meetings (raw): ${c.meetingsRaw}`);
+  if (c.meetingsValidated > 0) lines.push(`Meetings (validated): ${c.meetingsValidated} (confidence: ${(c.meetingConfidence * 100).toFixed(0)}%)`);
+  if (c.lastInteraction) lines.push(`Last interaction: ${c.lastInteraction}`);
+  if (c.notes) lines.push(`Notes: ${c.notes}`);
+  if (c.location) lines.push(`Location: ${c.location}`);
+  if (c.industry) lines.push(`Industry: ${c.industry}`);
+  return lines.join("\n") || "No additional touch data";
+}
+
+const OUTCOME_PILLS: Array<{ value: CallOutcome; label: string; color: string }> = [
+  { value: "texted", label: "Texted", color: "border-sky-500/40 bg-sky-500/10 text-sky-400" },
+  { value: "auto_vm", label: "Auto VM", color: "border-blue-500/40 bg-blue-500/10 text-blue-400" },
+  { value: "manual_vm", label: "Manual VM", color: "border-indigo-500/40 bg-indigo-500/10 text-indigo-400" },
+  { value: "calendar_sent", label: "🗓️ sent", color: "border-amber-500/40 bg-amber-500/10 text-amber-400" },
 ];
 
 /** Return the most recent unresolved attempt for a contact, or null. */
 function getLatestUnresolvedAttempt(attempts: CallAttempt[], contactId: string): CallAttempt | null {
   return attempts
     .filter((a) => a.contactId === contactId && a.outcome === null)
-    .sort(
-      (a, b) => new Date(b.initiatedAt).getTime() - new Date(a.initiatedAt).getTime(),
-    )[0] ?? null;
+    .sort((a, b) => new Date(b.initiatedAt).getTime() - new Date(a.initiatedAt).getTime())[0] ?? null;
 }
 
 function PowerdialerCall() {
@@ -69,16 +72,8 @@ function PowerdialerCall() {
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [attempts, setAttempts] = useState<CallAttempt[]>([]);
-
-  // Outcome panel state
-  const [outcome, setOutcome] = useState<CallOutcome | null>(null);
-  const [notes, setNotes] = useState("");
-  const [nextStep, setNextStep] = useState("");
-  const [nextStepDue, setNextStepDue] = useState("");
-  const [commitmentStatus, setCommitmentStatus] =
-    useState<CommitmentStatus>("not_discussed");
-  const [commitmentDetails, setCommitmentDetails] = useState("");
-  const [showOutcomePanel, setShowOutcomePanel] = useState(false);
+  const [touchExpanded, setTouchExpanded] = useState(false);
+  const [called, setCalled] = useState(false);
 
   // Load data
   useEffect(() => {
@@ -89,19 +84,18 @@ function PowerdialerCall() {
     ]).then(([allContacts, allItems, atts]) => {
       setAttempts(atts);
 
-      // Filter to active queue items for the V9 relationship campaign
+      const now = new Date().toISOString();
       const v9Items = allItems.filter(
         (qi) =>
           qi.campaignId === "v9_relationship_calls" &&
           qi.queueStatus !== "suppressed" &&
           qi.queueStatus !== "completed" &&
-          qi.queueStatus !== "attempted",
+          qi.queueStatus !== "attempted" &&
+          (!qi.nextCallAt || qi.nextCallAt <= now),
       );
 
-      // Sort by priority (ascending)
       v9Items.sort((a, b) => a.priority - b.priority);
 
-      // Build contact map
       const contactMap = new Map(allContacts.map((c) => [c.id, c]));
       const orderedContacts = v9Items
         .map((qi) => contactMap.get(qi.contactId))
@@ -109,21 +103,19 @@ function PowerdialerCall() {
 
       setQueueItems(v9Items);
       setContacts(orderedContacts);
+
+      // If first contact has pending outcome, show outcome state
+      if (v9Items.length > 0) {
+        const firstStatus = v9Items[0].queueStatus;
+        setCalled(firstStatus === "initiated_unconfirmed" || firstStatus === "outcome_required");
+      }
+
       setLoading(false);
-    }).catch(() => {
-      setLoading(false);
-    });
+    }).catch(() => setLoading(false));
   }, []);
 
   const contact = contacts[currentIdx];
   const queueItem = queueItems[currentIdx];
-  const contactAttempts = useMemo(
-    () =>
-      contact
-        ? attempts.filter((a) => a.contactId === contact.id)
-        : [],
-    [contact, attempts],
-  );
 
   const duplicatePhone = useMemo(
     () =>
@@ -140,30 +132,17 @@ function PowerdialerCall() {
 
   const advance = () => {
     const next = currentIdx + 1;
-    if (next >= contacts.length) {
-      setCurrentIdx(next);
-      return;
-    }
     setCurrentIdx(next);
-    // Reset state
-    setOutcome(null);
-    setNotes("");
-    setNextStep("");
-    setNextStepDue("");
-    setCommitmentStatus("not_discussed");
-    setCommitmentDetails("");
-    setShowOutcomePanel(false);
+    setCalled(false);
+    setTouchExpanded(false);
   };
 
-  // ── Launch (does NOT place call; just opens FaceTime/Phone link) ──
-  const launchCall = (channel: CallChannel) => {
+  // ── Start FaceTime Audio ──
+  const launchCall = async () => {
     if (!contact?.phone || !queueItem) return;
 
-    const url = channel === "facetime_audio"
-      ? `facetime-audio://${contact.phone}`
-      : `tel:${contact.phone}`;
+    const url = `facetime-audio://${contact.phone}`;
 
-    // Create attempt record with initiated_unconfirmed
     const attempt: CallAttempt = {
       id: `att-${crypto.randomUUID()}`,
       queueItemId: queueItem.id,
@@ -172,7 +151,7 @@ function PowerdialerCall() {
       initiatedAt: new Date().toISOString(),
       loggedAt: null,
       calledBy: "Chino",
-      channel,
+      channel: "facetime_audio",
       phoneUsed: contact.phone,
       outcome: null,
       notes: "",
@@ -183,7 +162,6 @@ function PowerdialerCall() {
       evidenceReference: "",
     };
 
-    // Update queue item status
     const updatedQI: QueueItem = {
       ...queueItem,
       queueStatus: "initiated_unconfirmed",
@@ -191,39 +169,28 @@ function PowerdialerCall() {
       lastAttemptAt: attempt.initiatedAt,
     };
 
-    Promise.all([
-      db.addCallAttempt(attempt),
-      db.updateQueueItem(updatedQI),
-    ]).then(() => {
+    try {
+      await Promise.all([
+        db.addCallAttempt(attempt),
+        db.updateQueueItem(updatedQI),
+      ]);
       setAttempts((prev) => [attempt, ...prev]);
       setQueueItems((prev) =>
         prev.map((qi) => (qi.id === queueItem.id ? updatedQI : qi)),
       );
-      setShowOutcomePanel(true);
-      toast.success(
-        channel === "facetime_audio"
-          ? "FaceTime Audio launched — outcome unconfirmed"
-          : "Phone launched — outcome unconfirmed",
-      );
-      // Open dialer only after DB write succeeds
-      window.location.href = url;
-    }).catch(() => {
+      setCalled(true);
+      toast.success("FaceTime Audio launched");
+    } catch {
       toast.error("Failed to record attempt");
-    });
-  };
-
-  // ── Save outcome ──
-  const saveOutcome = async () => {
-    if (!outcome || !contact || !queueItem) return;
-
-    // Enforce commitment details when soft_yes or yes
-    if (
-      (commitmentStatus === "soft_yes" || commitmentStatus === "yes") &&
-      !commitmentDetails.trim()
-    ) {
-      toast.error("Commitment details are required for Yes / Soft Yes");
       return;
     }
+
+    window.location.href = url;
+  };
+
+  // ── Save outcome pill ──
+  const saveOutcome = async (outcome: CallOutcome) => {
+    if (!contact || !queueItem) return;
 
     const latestAttempt = getLatestUnresolvedAttempt(attempts, contact.id);
     if (!latestAttempt) {
@@ -235,26 +202,12 @@ function PowerdialerCall() {
       ...latestAttempt,
       loggedAt: new Date().toISOString(),
       outcome,
-      notes,
-      nextStep,
-      nextStepDue: nextStepDue || null,
-      commitmentStatus,
-      commitmentDetails,
+      notes: "",
     };
-
-    // Determine new queue status
-    let newStatus: QueueItem["queueStatus"] = "attempted";
-    if (outcome === "wrong_number" || outcome === "do_not_call" || outcome === "duplicate") {
-      newStatus = "suppressed";
-    } else if (outcome === "skip_for_now") {
-      newStatus = "queued";
-    }
 
     const updatedQI: QueueItem = {
       ...queueItem,
-      queueStatus: newStatus,
-      suppressionReason:
-        newStatus === "suppressed" ? outcome : queueItem.suppressionReason,
+      queueStatus: "attempted",
     };
 
     try {
@@ -274,104 +227,133 @@ function PowerdialerCall() {
       prev.map((qi) => (qi.id === queueItem.id ? updatedQI : qi)),
     );
 
-    toast.success("Outcome logged");
-    setShowOutcomePanel(false);
-
-    if (newStatus === "suppressed") {
-      advance();
-    } else if (newStatus !== "queued") {
-      // For normal outcomes (attempted), advance to next contact.
-      // skip_for_now re-queues, so don't advance — same contact comes back later.
-      advance();
-    }
-  };
-
-  // ── Skip without calling ──
-  const skipContact = async () => {
-    if (!queueItem || !contact) return;
-
-    // Resolve any unreconciled CallAttempt before skipping,
-    // so the attempt doesn't become a permanent orphan.
-    const unreconciledAttempts = attempts.filter(
-      (a) => a.contactId === contact.id && a.outcome === null,
-    );
-    const resolvedMap = new Map<string, CallAttempt>();
-    const ops: Promise<unknown>[] = [];
-
-    for (const a of unreconciledAttempts) {
-      const resolved: CallAttempt = {
-        ...a,
-        loggedAt: new Date().toISOString(),
-        outcome: "skip_for_now",
-        notes: a.notes || "Skipped without calling",
-      };
-      resolvedMap.set(a.id, resolved);
-      ops.push(db.updateCallAttempt(resolved));
-    }
-
-    const updatedQI: QueueItem = {
-      ...queueItem,
-      queueStatus: "suppressed",
-      suppressionReason: "skip_for_now",
-    };
-    ops.push(db.updateQueueItem(updatedQI));
-
-    try {
-      await Promise.all(ops);
-    } catch {
-      toast.error("Failed to skip contact");
-      return;
-    }
-
-    setQueueItems((prev) =>
-      prev.map((qi) => (qi.id === queueItem.id ? updatedQI : qi)),
-    );
-    if (unreconciledAttempts.length > 0) {
-      setAttempts((prev) =>
-        prev.map((a) => resolvedMap.get(a.id) ?? a),
-      );
-    }
+    toast.success(`Logged: ${outcome.replace("_", " ")}`);
     advance();
   };
 
-  // ── Defer outcome (Log later) ──
-  const deferOutcome = async () => {
-    if (!queueItem || !contact) return;
-    setShowOutcomePanel(false);
+  // ── Intro Offered → Spark Email ──
+  const introOffered = async () => {
+    if (!contact || !queueItem) return;
 
     const latestAttempt = getLatestUnresolvedAttempt(attempts, contact.id);
-    const updatedQI: QueueItem = {
+    const ops: Promise<unknown>[] = [];
+
+    if (latestAttempt) {
+      ops.push(db.updateCallAttempt({
+        ...latestAttempt,
+        loggedAt: new Date().toISOString(),
+        outcome: "intro_offered",
+        notes: "",
+      }));
+    }
+
+    ops.push(db.updateQueueItem({
       ...queueItem,
-      queueStatus: "outcome_required",
-    };
-
-    const deferredAttempt: CallAttempt | null = latestAttempt
-      ? {
-          ...latestAttempt,
-          loggedAt: new Date().toISOString(),
-          outcome: null,
-          notes: "Deferred — outcome pending",
-        }
-      : null;
-
-    const ops: Promise<unknown>[] = [db.updateQueueItem(updatedQI)];
-    if (deferredAttempt) ops.push(db.updateCallAttempt(deferredAttempt));
+      queueStatus: "attempted",
+    }));
 
     try {
       await Promise.all(ops);
     } catch {
-      toast.error("Failed to defer call");
+      toast.error("Failed to log intro");
       return;
     }
 
-    if (deferredAttempt) {
-      setAttempts((prev) =>
-        prev.map((a) => (a.id === deferredAttempt.id ? deferredAttempt : a)),
-      );
+    if (contact.email) {
+      const subject = encodeURIComponent(`${contact.fullName.split(" ")[0]} <> Chino — intro`);
+      window.open(`mailto:${contact.email}?subject=${subject}`, "_blank");
     }
-    setQueueItems((prev) =>
-      prev.map((qi) => (qi.id === queueItem.id ? updatedQI : qi)),
-    );
+    toast.success("Intro Offered — email opened");
+    advance();
+  };
+
+  // ── Call again later → Re-queue in 3 days ──
+  const callAgainLater = async () => {
+    if (!contact || !queueItem) return;
+
+    const threeDays = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+    const latestAttempt = getLatestUnresolvedAttempt(attempts, contact.id);
+    const ops: Promise<unknown>[] = [];
+
+    if (latestAttempt) {
+      ops.push(db.updateCallAttempt({
+        ...latestAttempt,
+        loggedAt: new Date().toISOString(),
+        outcome: "skip_for_now",
+        notes: "Re-queued for 3 days",
+      }));
+    }
+
+    ops.push(db.updateQueueItem({
+      ...queueItem,
+      queueStatus: "queued",
+      nextCallAt: threeDays,
+    }));
+
+    try {
+      await Promise.all(ops);
+    } catch {
+      toast.error("Failed to re-queue");
+      return;
+    }
+
+    toast.success("Re-queued in 3 days");
+    advance();
+  };
+
+  // ── Skip: random 5-21 slots down ──
+  const skipDown = async () => {
+    if (!queueItem || !contact) return;
+
+    const items = await db.getAllQueueItems();
+    const now = new Date().toISOString();
+    const eligible = items
+      .filter((qi) =>
+        qi.campaignId === "v9_relationship_calls" &&
+        qi.queueStatus !== "suppressed" &&
+        qi.queueStatus !== "completed" &&
+        qi.queueStatus !== "attempted" &&
+        (!qi.nextCallAt || qi.nextCallAt <= now),
+      )
+      .sort((a, b) => a.priority - b.priority);
+
+    const curIdx = eligible.findIndex((qi) => qi.id === queueItem.id);
+    if (curIdx === -1 || eligible.length <= 1) return;
+
+    const shift = Math.floor(Math.random() * 17) + 5;
+    const targetIdx = Math.min(curIdx + shift, eligible.length - 1);
+    if (targetIdx === curIdx) return;
+
+    let newPriority: number;
+    if (targetIdx >= eligible.length - 1) {
+      newPriority = eligible[eligible.length - 1].priority + 1;
+    } else {
+      newPriority = (eligible[targetIdx].priority + eligible[targetIdx + 1].priority) / 2;
+    }
+
+    const latestAttempt = getLatestUnresolvedAttempt(attempts, contact.id);
+    const ops: Promise<unknown>[] = [];
+
+    if (latestAttempt) {
+      ops.push(db.updateCallAttempt({
+        ...latestAttempt,
+        loggedAt: new Date().toISOString(),
+        outcome: "skip_for_now",
+        notes: `Skipped ${shift} slots down`,
+      }));
+    }
+
+    ops.push(db.updateQueueItem({ ...queueItem, priority: newPriority }));
+
+    try {
+      await Promise.all(ops);
+    } catch {
+      toast.error("Failed to skip");
+      return;
+    }
+
+    toast.success(`Skipped ${shift} slots down`);
+    advance();
   };
 
   if (loading) {
@@ -417,9 +399,7 @@ function PowerdialerCall() {
   }
 
   return (
-    <div className="min-h-screen pb-40">
-      <Toaster theme="dark" richColors position="top-center" />
-
+    <div className="min-h-screen pb-20">
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-border bg-background/90 px-5 py-4 backdrop-blur">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -428,14 +408,14 @@ function PowerdialerCall() {
             {currentIdx + 1} / {contacts.length}
           </span>
           <div className="flex gap-3">
-            <button type="button" onClick={skipContact} className="text-muted-foreground" aria-label="Skip this contact">
+            <button type="button" onClick={skipDown} className="text-muted-foreground" aria-label="Skip this contact">
               Skip →
             </button>
           </div>
         </div>
       </header>
 
-      <div className="space-y-5 px-5 py-6">
+      <div className="space-y-4 px-5 py-6">
         {/* Contact card */}
         <div className="rounded-2xl border border-border bg-card p-5">
           <div className="flex items-center gap-2">
@@ -450,9 +430,9 @@ function PowerdialerCall() {
               Engagement: {contact.engagementScore.toFixed(0)}
             </span>
           </div>
-          <h1 className="mt-2 font-serif text-2xl leading-tight">
+          <h2 className="mt-2 font-serif text-xl leading-tight">
             {contact.fullName}
-          </h1>
+          </h2>
           {contact.company && (
             <p className="text-sm text-muted-foreground">
               {contact.title ? `${contact.title} · ` : ""}
@@ -460,243 +440,146 @@ function PowerdialerCall() {
             </p>
           )}
           {contact.phone && (
-            <p className="mt-2 font-mono text-sm">{contact.phone}</p>
+            <p className="mt-1.5 font-mono text-sm">{contact.phone}</p>
           )}
           {contact.email && (
-            <p className="text-xs text-muted-foreground">{contact.email}</p>
+            <a
+              href={`mailto:${contact.email}`}
+              className="block text-xs text-blue-400 hover:underline"
+            >
+              {contact.email}
+            </a>
           )}
-
-          {/* Relationship evidence */}
-          <div className="mt-3 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
-            {contact.meetingsValidated > 0 && (
-              <span className="rounded border border-border px-1.5 py-0.5">
-                {contact.meetingsValidated} meetings
-              </span>
-            )}
-            {contact.emails > 0 && (
-              <span className="rounded border border-border px-1.5 py-0.5">
-                {contact.emails} emails
-              </span>
-            )}
-            {contact.texts > 0 && (
-              <span className="rounded border border-border px-1.5 py-0.5">
-                {contact.texts} texts
-              </span>
-            )}
-            {contact.callsAnswered > 0 && (
-              <span className="rounded border border-border px-1.5 py-0.5">
-                {contact.callsAnswered} calls
-              </span>
-            )}
-            {contact.meetingsValidated > 0 && contact.granolaConfirmed > 0 && (
-              <span className="rounded border border-amber-500/30 bg-amber-500/5 px-1.5 py-0.5">
-                Granola ✓
-              </span>
-            )}
-          </div>
-
-          {/* Quarantine warning */}
-          {contact.quarantined && (
-            <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-400">
-              Quarantined: {contact.quarantineReason}
-            </div>
-          )}
-
-          {/* Previous attempts */}
-          {contactAttempts.length > 0 && (
-            <div className="mt-3 rounded-lg border border-border/50 bg-muted/30 p-2">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Prior attempts
-              </p>
-              {contactAttempts.slice(0, 3).map((a, i) => (
-                <div key={i} className="mt-1 text-xs text-muted-foreground">
-                  {new Date(a.initiatedAt).toLocaleString()} ·{" "}
-                  {a.channel === "facetime_audio" ? "FaceTime" : "Phone"} ·{" "}
-                  {a.outcome ?? "pending"}
-                  {a.notes ? ` — ${a.notes.slice(0, 60)}` : ""}
-                </div>
-              ))}
-            </div>
+          {contact.linkedinUrl && (
+            <a
+              href={contact.linkedinUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-block mt-1 text-xs text-sky-400 hover:underline"
+            >
+              LinkedIn ↗
+            </a>
           )}
 
           {/* Duplicate phone warning */}
           {duplicatePhone && (
             <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-400">
-              This phone was previously marked wrong-number or DNC on another
-              contact. Review before dialing.
+              This phone was previously marked wrong-number or DNC on another contact. Review before dialing.
             </div>
           )}
+
+          {/* Touch summary */}
+          <div className="mt-3 rounded-lg border border-border/50 bg-muted/30 p-3">
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              {formatTouchSummary(contact)}
+            </p>
+            <button
+              type="button"
+              onClick={() => setTouchExpanded(!touchExpanded)}
+              className="mt-1 text-[10px] text-muted-foreground hover:text-foreground"
+            >
+              {touchExpanded ? "Collapse" : "Expand"} touch history
+            </button>
+            {touchExpanded && (
+              <pre className="mt-2 whitespace-pre-wrap text-[10px] text-muted-foreground leading-relaxed">
+                {formatFullTouch(contact)}
+              </pre>
+            )}
+          </div>
         </div>
 
-        {/* Launch buttons */}
-        <div className="rounded-2xl border border-border bg-card p-5">
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-            Launch call
-          </p>
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            <button
-              onClick={() => launchCall("facetime_audio")}
-              disabled={!contact.phone}
-              className="flex flex-col items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-6 text-blue-400 transition-all active:scale-95 disabled:opacity-30"
+        {/* Start FaceTime Audio button */}
+        <button
+          disabled={!contact.phone || called}
+          onClick={launchCall}
+          className="flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-4 font-medium text-white shadow-[0_8px_30px_-10px] shadow-blue-500/40 transition-all active:scale-[0.99] disabled:opacity-30"
+        >
+          <span className="text-base">Start FaceTime Audio</span>
+        </button>
+
+        {/* ROW 1: Text / VM Drop / gCal */}
+        <div className="grid grid-cols-3 gap-2">
+          {contact.phone && (
+            <a
+              href={`sms:${contact.phone}`}
+              className="flex items-center justify-center rounded-lg border border-border bg-card px-3 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30 transition-colors"
             >
-              <span className="text-lg font-medium">FaceTime</span>
-              <span className="mt-1 text-[10px] uppercase tracking-wider opacity-60">
-                Audio
-              </span>
-            </button>
-            <button
-              onClick={() => launchCall("phone")}
-              disabled={!contact.phone}
-              className="flex flex-col items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-6 text-emerald-400 transition-all active:scale-95 disabled:opacity-30"
+              Text
+            </a>
+          )}
+          <button
+            type="button"
+            disabled={!contact.phone}
+            onClick={() => {
+              if (!contact.phone) return;
+              window.location.href = `tel:${contact.phone}`;
+            }}
+            className="flex items-center justify-center rounded-lg border border-border bg-card px-3 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30 transition-colors disabled:opacity-30"
+          >
+            VM Drop
+          </button>
+          {contact.email && (
+            <a
+              href={`mailto:${contact.email}?subject=${encodeURIComponent(contact.fullName.split(" ")[0])}%20%3C%3E%20Chino%20%E2%80%94%20catch%20up`}
+              className="flex items-center justify-center rounded-lg border border-border bg-card px-3 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30 transition-colors"
             >
-              <span className="text-lg font-medium">Phone</span>
-              <span className="mt-1 text-[10px] uppercase tracking-wider opacity-60">
-                Cellular
-              </span>
-            </button>
-          </div>
-          {!contact.phone && (
-            <p className="mt-2 text-center text-[10px] text-muted-foreground">
-              No phone number — cannot dial
-            </p>
+              gCal
+            </a>
           )}
         </div>
 
-        {/* Context */}
-        {contact.notes && (
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              Notes
-            </p>
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              {contact.notes}
-            </p>
-          </div>
-        )}
-
-        {/* Source evidence */}
-        {contact.sourceFiles && (
-          <div className="rounded-2xl border border-accent/30 bg-accent/5 p-5">
+        {/* Post-call outcome panel */}
+        {called && (
+          <div className="rounded-2xl border border-accent/40 bg-gradient-to-br from-accent/10 to-primary/5 p-5 space-y-4">
             <p className="text-xs uppercase tracking-[0.2em] text-accent">
-              Source evidence
+              Log outcome
             </p>
-            <p className="mt-2 text-xs leading-relaxed">{contact.sourceFiles}</p>
-          </div>
-        )}
 
-        {/* QA flags */}
-        {contact.qaFlags && (
-          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5">
-            <p className="text-xs uppercase tracking-[0.2em] text-amber-400">
-              QA flags
-            </p>
-            <p className="mt-2 text-xs leading-relaxed text-amber-400/80">
-              {contact.qaFlags}
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Outcome panel — fixed bottom sheet */}
-      {showOutcomePanel && (
-        <div className="fixed inset-x-0 bottom-0 z-20 rounded-t-2xl border-t border-border bg-card p-5 shadow-[0_-10px_40px_rgba(0,0,0,0.4)] max-h-[70vh] overflow-y-auto">
-          <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-border" />
-
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-            Call outcome — required
-          </p>
-
-          {/* Outcome buttons */}
-          <div className="mt-3 grid grid-cols-4 gap-1.5">
-            {OUTCOMES.map((o) => (
-              <button
-                key={o.value}
-                onClick={() => setOutcome(o.value)}
-                className={`rounded-lg border px-2 py-2 text-[10px] font-medium transition-colors ${
-                  outcome === o.value
-                    ? "border-primary bg-primary/20 text-primary"
-                    : "border-border text-muted-foreground hover:border-muted-foreground/30"
-                }`}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Notes */}
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={3}
-            placeholder="What happened? What did they say?"
-            className="mt-3 w-full resize-none rounded-lg border border-border bg-input/40 px-3 py-2 text-sm leading-relaxed outline-none focus:border-primary"
-          />
-
-          {/* Next step */}
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <input
-              value={nextStep}
-              onChange={(e) => setNextStep(e.target.value)}
-              placeholder="Next step (e.g., send intro)"
-              className="rounded-lg border border-border bg-input/40 px-3 py-2 text-xs outline-none focus:border-primary"
-            />
-            <input
-              value={nextStepDue}
-              onChange={(e) => setNextStepDue(e.target.value)}
-              placeholder="Due date (optional)"
-              className="rounded-lg border border-border bg-input/40 px-3 py-2 text-xs outline-none focus:border-primary"
-            />
-          </div>
-
-          {/* Commitment */}
-          <div className="mt-3">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Commitment
-            </p>
-            <div className="mt-1.5 grid grid-cols-5 gap-1">
-              {COMMITMENTS.map((c) => (
+            {/* ROW 2: Outcome pills */}
+            <div className="grid grid-cols-4 gap-2">
+              {OUTCOME_PILLS.map((pill) => (
                 <button
-                  key={c.value}
-                  onClick={() => setCommitmentStatus(c.value)}
-                  className={`rounded-lg border px-1 py-1.5 text-[9px] font-medium ${
-                    commitmentStatus === c.value
-                      ? "border-primary bg-primary/20 text-primary"
-                      : "border-border text-muted-foreground"
-                  }`}
+                  key={pill.value}
+                  type="button"
+                  onClick={() => saveOutcome(pill.value)}
+                  className={`rounded-lg border px-2 py-2.5 text-[10px] font-medium transition-colors active:scale-95 ${pill.color}`}
                 >
-                  {c.label}
+                  {pill.label}
                 </button>
               ))}
             </div>
-            {(commitmentStatus === "soft_yes" ||
-              commitmentStatus === "yes") && (
-              <input
-                value={commitmentDetails}
-                onChange={(e) => setCommitmentDetails(e.target.value)}
-                placeholder="Describe the commitment (required)"
-                className="mt-1.5 w-full rounded-lg border border-border bg-input/40 px-3 py-2 text-xs outline-none focus:border-primary"
-              />
-            )}
-          </div>
 
-          {/* Save */}
-          <div className="mt-4 flex gap-2">
-            <button
-              onClick={() => deferOutcome()}
-              className="flex-1 rounded-lg border border-border py-3 text-sm text-muted-foreground"
-            >
-              Log later
-            </button>
-            <button
-              onClick={saveOutcome}
-              disabled={!outcome}
-              className="flex-[2] rounded-lg bg-primary py-3 text-sm font-medium text-primary-foreground disabled:opacity-40"
-            >
-              {outcome ? `Log "${OUTCOMES.find((o) => o.value === outcome)?.label}" & advance` : "Select outcome"}
-            </button>
+            {/* ROW 3: Follow-up */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={introOffered}
+                className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2.5 text-xs font-medium text-emerald-400 transition-colors active:scale-95"
+              >
+                Intro Offered → Email
+              </button>
+              <button
+                type="button"
+                onClick={callAgainLater}
+                className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs font-medium text-amber-400 transition-colors active:scale-95"
+              >
+                Call again later
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Skip button (when not in called state) */}
+        {!called && (
+          <button
+            type="button"
+            onClick={skipDown}
+            className="flex w-full items-center justify-center rounded-lg border border-border bg-card px-4 py-2.5 text-xs text-muted-foreground hover:border-muted-foreground/30 transition-colors"
+          >
+            Skip (5–21 slots down)
+          </button>
+        )}
+      </div>
     </div>
   );
 }

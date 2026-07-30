@@ -50,6 +50,10 @@ export const OUTCOME_COLORS: Record<CallOutcome, string> = {
   skip_for_now: "text-zinc-500",
   intro_offered: "text-emerald-400",
   intro_made: "text-emerald-400",
+  texted: "text-sky-400",
+  auto_vm: "text-blue-400",
+  manual_vm: "text-blue-400",
+  calendar_sent: "text-amber-400",
 };
 
 export const COMMITMENT_COLORS: Record<CommitmentStatus, string> = {

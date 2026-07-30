@@ -86,7 +86,11 @@ export type CallOutcome =
   | "wrong_number"
   | "do_not_call"
   | "duplicate"
-  | "skip_for_now";
+  | "skip_for_now"
+  | "texted"
+  | "auto_vm"
+  | "manual_vm"
+  | "calendar_sent";
 
 export type CommitmentStatus =
   | "not_discussed"
