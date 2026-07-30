@@ -4,6 +4,7 @@
 import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { db } from "@/lib/powerdialer-db";
+import { importV9CSV, persistImport } from "@/lib/v9-import";
 import type { ImportReport, Campaign } from "@/lib/powerdialer-types";
 import { TIER_ORDER, TIER_META } from "@/lib/powerdialer-constants";
 
@@ -27,6 +28,51 @@ function PowerdialerHome() {
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [queueCounts, setQueueCounts] = useState<Record<string, number>>({});
   const [attemptsTotal, setAttemptsTotal] = useState(0);
+  const [autoImporting, setAutoImporting] = useState(false);
+
+  // Auto-import pre-loaded contacts CSV on first visit
+  useEffect(() => {
+    if (report !== null || loading) return;
+    // Only run if DB is truly empty (no report, no queue items)
+    db.getAllQueueItems().then((items) => {
+      if (items.length === 0) {
+        setAutoImporting(true);
+        fetch("/v9-contacts.csv")
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.text();
+          })
+          .then(async (csv) => {
+            const result = await importV9CSV(csv);
+            return persistImport(result);
+          })
+          .then(() => {
+            // Reload after import
+            return Promise.all([
+              db.getLatestImportReport(),
+              db.getCampaign("v9_relationship_calls"),
+              db.getAllQueueItems(),
+              db.getAllCallAttempts(),
+            ]);
+          })
+          .then(([rep, cam, items, attempts]) => {
+            setReport(rep ?? null);
+            setCampaign(cam ?? null);
+            setAttemptsTotal(attempts.length);
+            const counts: Record<string, number> = {};
+            for (const item of items) {
+              counts[item.queueStatus] = (counts[item.queueStatus] || 0) + 1;
+            }
+            setQueueCounts(counts);
+            setAutoImporting(false);
+          })
+          .catch((err) => {
+            console.error("Auto-import failed:", err);
+            setAutoImporting(false);
+          });
+      }
+    });
+  }, [report, loading]);
 
   useEffect(() => {
     Promise.all([
@@ -53,10 +99,19 @@ function PowerdialerHome() {
 
   if (!isIndex) return <Outlet />;
 
-  if (loading) {
+  if (loading || autoImporting) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted-foreground">Loading Powerdialer…</p>
+        <div className="text-center">
+          <p className="text-sm text-muted-foreground">
+            {autoImporting ? "Pre-loading your contacts…" : "Loading Powerdialer…"}
+          </p>
+          {autoImporting && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              29,762 contacts loading — this takes a few seconds
+            </p>
+          )}
+        </div>
       </div>
     );
   }
