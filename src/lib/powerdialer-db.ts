@@ -69,7 +69,10 @@ function openDB(): Promise<IDBDatabase> {
       }
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => {
+      dbPromise = null; // Allow retry on next call
+      reject(req.error);
+    };
   });
   return dbPromise;
 }

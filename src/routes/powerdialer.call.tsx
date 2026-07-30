@@ -283,16 +283,41 @@ function PowerdialerCall() {
 
   // ── Skip without calling ──
   const skipContact = async () => {
-    if (!queueItem) return;
+    if (!queueItem || !contact) return;
+
+    // Resolve any unreconciled CallAttempt before skipping,
+    // so the attempt doesn't become a permanent orphan.
+    const unreconciledAttempts = attempts.filter(
+      (a) => a.contactId === contact.id && a.outcome === null,
+    );
+    const ops: Promise<unknown>[] = [];
+
+    for (const a of unreconciledAttempts) {
+      const resolved: CallAttempt = {
+        ...a,
+        loggedAt: new Date().toISOString(),
+        outcome: "skip_for_now",
+        notes: a.notes || "Skipped without calling",
+      };
+      ops.push(db.updateCallAttempt(resolved));
+    }
+
     const updatedQI: QueueItem = {
       ...queueItem,
       queueStatus: "suppressed",
       suppressionReason: "skip_for_now",
     };
-    await db.updateQueueItem(updatedQI);
+    ops.push(db.updateQueueItem(updatedQI));
+
+    await Promise.all(ops);
     setQueueItems((prev) =>
       prev.map((qi) => (qi.id === queueItem.id ? updatedQI : qi)),
     );
+    if (unreconciledAttempts.length > 0) {
+      setAttempts((prev) =>
+        prev.filter((a) => a.contactId !== contact.id || a.outcome !== null),
+      );
+    }
     advance();
   };
 
@@ -359,7 +384,7 @@ function PowerdialerCall() {
             {currentIdx + 1} / {contacts.length}
           </span>
           <div className="flex gap-3">
-            <button onClick={skipContact} className="text-muted-foreground">
+            <button type="button" onClick={skipContact} className="text-muted-foreground" aria-label="Skip this contact">
               Skip →
             </button>
           </div>
