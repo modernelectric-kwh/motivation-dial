@@ -1,7 +1,7 @@
 // ── Powerdialer Import ──
 // Upload the canonical V9 CSV, run QA, and persist.
 
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { importV9CSV, persistImport, type ImportResult } from "@/lib/v9-import";
 import { db } from "@/lib/powerdialer-db";
@@ -20,7 +20,6 @@ export const Route = createFileRoute("/powerdialer/import")({
 });
 
 function ImportPage() {
-  const nav = useNavigate();
   const [status, setStatus] = useState<"idle" | "parsing" | "importing" | "done" | "error">("idle");
   const [existingReport, setExistingReport] = useState<ImportReport | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);

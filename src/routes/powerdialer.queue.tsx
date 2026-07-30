@@ -1,7 +1,7 @@
 // ── Powerdialer Queue Manager ──
 // Browse, filter by tier, search, and manage queue items.
 
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { db } from "@/lib/powerdialer-db";
 import type { V9Contact, QueueItem, V9Tier, QueueStatus } from "@/lib/powerdialer-types";
@@ -32,7 +32,6 @@ const STATUS_COLORS: Record<QueueStatus, string> = {
 };
 
 function QueuePage() {
-  const nav = useNavigate();
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [contacts, setContacts] = useState<V9Contact[]>([]);
   const [loading, setLoading] = useState(true);
@@ -91,17 +90,6 @@ function QueuePage() {
 
     return filtered;
   }, [queueItems, contactMap, filterTier, search, showClose]);
-
-  const jumpToContact = (contactId: string) => {
-    // Find the index in the sorted queue
-    const idx = rows.findIndex((r) => r.contact.id === contactId);
-    if (idx >= 0) {
-      // We can't directly set the index in the call screen since it loads independently,
-      // but we can navigate to the call screen which will start from the beginning.
-      // For now, just navigate.
-      nav({ to: "/powerdialer/call" });
-    }
-  };
 
   if (loading) {
     return (
@@ -189,8 +177,8 @@ function QueuePage() {
                 </span>
 
                 {/* Contact info */}
-                <button
-                  onClick={() => jumpToContact(contact.id)}
+                <Link
+                  to="/powerdialer/call"
                   className="min-w-0 flex-1 text-left"
                 >
                   <div className="truncate text-sm font-medium">
@@ -200,7 +188,7 @@ function QueuePage() {
                     {contact.phone || "—"}
                     {contact.company ? ` · ${contact.company}` : ""}
                   </div>
-                </button>
+                </Link>
 
                 {/* Tier badge */}
                 <span
