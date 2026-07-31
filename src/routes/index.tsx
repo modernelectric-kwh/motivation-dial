@@ -10,6 +10,7 @@ import type { ImportReport, Campaign, V9Contact, QueueItem, CallAttempt, CallOut
 import { TIER_META } from "@/lib/powerdialer-constants";
 import { store } from "@/lib/store";
 import { loadVoicemailBlob } from "@/lib/vm-storage";
+import { runTierMigration } from "@/lib/tier-migration";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/")({
@@ -188,7 +189,10 @@ function Index() {
         }
       })
       .catch((err) => console.error("Dashboard load failed:", err))
-      .finally(() => {
+      .finally(async () => {
+        // One-time: bump Granola-confirmed contacts from cold → warm/close
+        const migrated = await runTierMigration();
+        if (migrated > 0) window.location.reload();
         setLoading(false);
         setAutoImporting(false);
         setContactLoading(false);

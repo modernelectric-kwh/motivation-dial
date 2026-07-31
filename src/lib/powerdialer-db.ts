@@ -203,6 +203,7 @@ export const db = {
   // ── Contacts ──
   getContact: (id: string) => getOne<V9Contact>(STORES.contacts, id),
   getAllContacts: () => getAll<V9Contact>(STORES.contacts),
+  updateContact: (contact: V9Contact) => putOne(STORES.contacts, contact),
   getContactsByTier: (tier: V9Tier) =>
     getByIndex<V9Contact>(STORES.contacts, "tier", tier),
   getContactsByPhone: (phone: string) =>
