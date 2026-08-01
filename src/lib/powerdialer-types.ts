@@ -134,6 +134,8 @@ export interface Campaign {
 }
 
 export interface ImportReport {
+  /** Campaign this report belongs to. */
+  campaignId: string;
   totalRows: number;
   tierCounts: Record<V9Tier, number>;
   callableCount: number;

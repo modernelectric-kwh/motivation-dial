@@ -350,6 +350,7 @@ export async function importV9CSV(text: string): Promise<ImportResult> {
   }));
 
   const report: ImportReport = {
+    campaignId: "v9_relationship_calls",
     totalRows: rows.length,
     tierCounts,
     callableCount,
@@ -380,6 +381,164 @@ export async function persistImport(result: ImportResult): Promise<void> {
   await db.clearAllData();
   await db.replaceContacts(result.contacts);
   await db.replaceQueueItems(result.queueItems);
+  for (const campaign of result.campaigns) {
+    await db.saveCampaign(campaign);
+  }
+  await db.saveImportReport(result.report);
+}
+
+// ── Energy Contacts Import ──
+
+/**
+ * Import the energy contacts CSV (subset of A-Z call list).
+ * Creates a separate "v9_energy_calls" campaign without touching
+ * personal (v9_relationship_calls) data.
+ * Only contacts WITH phone numbers get queue items (callable).
+ */
+export async function importEnergyCSV(text: string): Promise<ImportResult> {
+  const { rows } = parseCSV(text);
+  const importedAt = new Date().toISOString();
+
+  const contacts: V9Contact[] = [];
+  const rejectionReasons: Array<{ row: number; reason: string }> = [];
+  const tierCounts: Record<V9Tier, number> = {
+    inner_circle: 0,
+    close: 0,
+    warm: 0,
+    cold: 0,
+  };
+  const quarantinedReasons: Record<string, number> = {};
+  let callableCount = 0;
+  let phoneCount = 0;
+  let quarantinedCount = 0;
+
+  let rowIndex = 0;
+  for (const row of rows) {
+    rowIndex++;
+    const tier = normalizeTier(row["tier"]) || "warm"; // default warm for energy contacts
+
+    const phone = normalizePhone(row["phone"] || "");
+    const id = makeContactId({
+      email: row["email"] || "",
+      phone: row["phone"] || "",
+      full_name: row["full_name"] || "",
+    });
+
+    const contact: V9Contact = {
+      id,
+      fullName: (row["full_name"] || "").trim(),
+      email: (row["email"] || "").trim(),
+      phone,
+      company: (row["company"] || "").trim(),
+      title: (row["title"] || "").trim(),
+      headline: (row["headline"] || "").trim(),
+      linkedinUrl: (row["linkedin_url"] || "").trim(),
+      tier,
+      engagementScore: parseNum(row["engagement_score"]),
+      meetingsValidated: parseNum(row["meetings_validated"]),
+      meetingsRaw: parseNum(row["meetings_raw"]),
+      meetingConfidence: parseNum(row["meeting_confidence"]),
+      granolaConfirmed: parseNum(row["granola_confirmed"]),
+      emails: parseNum(row["emails"]),
+      callsAnswered: parseNum(row["calls_answered"]),
+      facetime: parseNum(row["facetime"]),
+      texts: parseNum(row["texts"]),
+      whatsapp: parseNum(row["whatsapp"]),
+      introNodeCount: parseNum(row["intro_node_count"]),
+      introNodes: row["intro_nodes"] || "",
+      lastInteraction: row["last_interaction"] || "",
+      notes: row["notes"] || "",
+      location: row["location"] || "",
+      industry: row["industry"] || "",
+      companyWebsite: row["company_website"] || "",
+      marketIntel: row["market_intel"] || "",
+      godNodeSources: row["god_node_sources"] || "",
+      sourceFiles: row["source_files"] || "",
+      qaFlags: row["qa_flags"] || "",
+      quarantined: false,
+      quarantineReason: "",
+    };
+
+    tierCounts[tier]++;
+    if (phone) phoneCount++;
+    if (phone && tier !== "cold") callableCount++;
+
+    contacts.push(contact);
+  }
+
+  // Campaign
+  const campaign: Campaign = {
+    id: "v9_energy_calls",
+    name: "Energy Contacts",
+    sourceBoard: "AZ_CALL_LIST_20260731",
+    defaultTierOrder: ["inner_circle", "close", "warm"],
+    goal: "Power-dial energy-sector contacts from A-Z call list.",
+    scriptVersion: "ENERGY_SECTOR",
+    createdAt: importedAt,
+    status: "active",
+  };
+
+  // Queue items — only for contacts with phone numbers (non-cold)
+  const eligible = contacts.filter(
+    (c) => c.tier !== "cold" && c.phone,
+  );
+
+  const tierPriority: Record<string, number> = {
+    inner_circle: 0,
+    close: 1,
+    warm: 2,
+    cold: 99,
+  };
+
+  eligible.sort((a, b) => {
+    const ta = tierPriority[a.tier] ?? 99;
+    const tb = tierPriority[b.tier] ?? 99;
+    if (ta !== tb) return ta - tb;
+    if (b.engagementScore !== a.engagementScore)
+      return b.engagementScore - a.engagementScore;
+    return b.meetingsValidated - a.meetingsValidated;
+  });
+
+  const queueItems: QueueItem[] = eligible.map((c, i) => ({
+    id: `qi-energy-${c.id}`,
+    campaignId: "v9_energy_calls",
+    contactId: c.id,
+    priority: i,
+    queueStatus: "queued" as const,
+    suppressionReason: "",
+    attemptCount: 0,
+    nextCallAt: null,
+    lastAttemptAt: null,
+    manualOrder: i,
+  }));
+
+  const report: ImportReport = {
+    campaignId: "v9_energy_calls",
+    totalRows: rows.length,
+    tierCounts,
+    callableCount,
+    phoneCount,
+    duplicatePhones: 0,
+    duplicatePhoneGroups: [],
+    quarantinedCount,
+    quarantinedReasons,
+    rejectedRows: rejectionReasons.length,
+    rejectionReasons,
+    importedAt,
+  };
+
+  return { report, contacts, queueItems, campaigns: [campaign] };
+}
+
+/**
+ * Persist an energy import result alongside existing personal data.
+ * Clears only the energy campaign's queue items and call attempts,
+ * then upserts contacts, queue items, campaign, and report.
+ */
+export async function persistEnergyImport(result: ImportResult): Promise<void> {
+  await db.clearCampaignData("v9_energy_calls");
+  await db.upsertContactsBatch(result.contacts);
+  await db.upsertQueueItemsBatch(result.queueItems);
   for (const campaign of result.campaigns) {
     await db.saveCampaign(campaign);
   }

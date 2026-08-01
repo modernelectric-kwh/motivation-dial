@@ -1,11 +1,11 @@
 // ── Memory Center · Unified Dashboard ──
-// Home screen: next-contact card + Start FaceTime Audio + quick actions with inline outcomes.
-// Motivation content replaces header/quote. All outcomes always visible (pre + post call).
+// Home screen with two tabs: Personal Contacts (V9 Rolodex) and Energy Contacts (A-Z call list).
+// Same experience on both tabs: contact card, Start FaceTime Audio, quick actions, skip.
 
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState, useCallback } from "react";
 import { db } from "@/lib/powerdialer-db";
-import { importV9CSV, persistImport } from "@/lib/v9-import";
+import { importV9CSV, persistImport, importEnergyCSV, persistEnergyImport } from "@/lib/v9-import";
 import type { ImportReport, Campaign, V9Contact, QueueItem, CallAttempt, CallOutcome } from "@/lib/powerdialer-types";
 import { TIER_META } from "@/lib/powerdialer-constants";
 import { store } from "@/lib/store";
@@ -52,31 +52,36 @@ function formatFullTouch(c: V9Contact): string {
   return lines.join("\n") || "No additional touch data";
 }
 
-/** Build a Google Calendar event creation URL with Meet conferencing */
 function buildGCalUrl(name: string, email: string | undefined, phone: string | undefined): string {
-  // Default to tomorrow at 10am for 30 min
   const now = new Date();
   const start = new Date(now);
   start.setDate(start.getDate() + 1);
   start.setHours(10, 0, 0, 0);
   const end = new Date(start.getTime() + 30 * 60 * 1000);
-
-  const fmt = (d: Date) =>
-    d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
-
+  const fmt = (d: Date) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
   const firstName = name.split(" ")[0];
   const title = encodeURIComponent(`${firstName} <> Chino — catch up`);
   const desc = encodeURIComponent(phone ? `Phone: ${phone}` : "");
   const guests = email ? `&add=${encodeURIComponent(email)}` : "";
-
   return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${fmt(start)}/${fmt(end)}&details=${desc}${guests}&confer=Meet`;
 }
 
+// ── Campaign config ──
+const PERSONAL_CAMPAIGN = "v9_relationship_calls";
+const ENERGY_CAMPAIGN = "v9_energy_calls";
+
+type TabId = "personal" | "energy";
+
 function Index() {
+  // ── Tab state ──
+  const [activeTab, setActiveTab] = useState<TabId>("personal");
+  const campaignId = activeTab === "personal" ? PERSONAL_CAMPAIGN : ENERGY_CAMPAIGN;
+
   // ── Dashboard data ──
   const [loading, setLoading] = useState(true);
   const [autoImporting, setAutoImporting] = useState(false);
-  const [report, setReport] = useState<ImportReport | null>(null);
+  const [personalReport, setPersonalReport] = useState<ImportReport | null>(null);
+  const [energyReport, setEnergyReport] = useState<ImportReport | null>(null);
   const [queueCounts, setQueueCounts] = useState<Record<string, number>>({});
   const [attemptsTotal, setAttemptsTotal] = useState(0);
   const [connectsTotal, setConnectsTotal] = useState(0);
@@ -104,13 +109,15 @@ function Index() {
     loadVoicemailBlob().then((b) => setVmBlob(b));
   }, []);
 
+  const report = activeTab === "personal" ? personalReport : energyReport;
+
   // Derived: is the next contact in a post-call state?
   const needsOutcome = nextQueueItem?.queueStatus === "initiated_unconfirmed"
     || nextQueueItem?.queueStatus === "outcome_required";
 
   // ── Auto-import on first visit ──
   useEffect(() => {
-    if (report !== null || !loading) return;
+    if (personalReport !== null || !loading) return;
     db.getAllQueueItems().then((items) => {
       if (items.length === 0) {
         setAutoImporting(true);
@@ -131,25 +138,46 @@ function Index() {
           });
       }
     });
-  }, [report, loading]);
+  }, [personalReport, loading]);
 
   // ── Load all dashboard + next-contact data ──
   useEffect(() => { loadDashboard(); }, []);
 
+  // Reload when tab changes — import energy on first visit
+  useEffect(() => {
+    if (!personalReport) return; // initial V9 load not done
+    if (activeTab === "energy" && !energyReport) {
+      importEnergy();
+      return; // importEnergy triggers re-render → this effect fires again
+    }
+    loadDashboard();
+  }, [activeTab, energyReport]);
+
   const loadDashboard = () =>
     Promise.all([
-      db.getLatestImportReport(),
-      db.getCampaign("v9_relationship_calls"),
+      db.getLatestImportReportForCampaign(campaignId),
+      db.getCampaign(campaignId),
       db.getAllQueueItems(),
-      db.getAllCallAttempts(),
+      db.getAttemptsByCampaign(campaignId),
       db.getAllContacts(),
+      // Also load the other campaign's report so both tabs show data
+      db.getLatestImportReportForCampaign(activeTab === "personal" ? ENERGY_CAMPAIGN : PERSONAL_CAMPAIGN),
+      db.getCampaign(activeTab === "personal" ? ENERGY_CAMPAIGN : PERSONAL_CAMPAIGN).catch(() => null),
     ])
-      .then(([rep, cam, items, atts, allContacts]) => {
-        setReport(rep ?? null);
+      .then(([rep, cam, items, atts, allContacts, otherRep, otherCampaign]) => {
+        // Store reports for both tabs
+        if (activeTab === "personal") {
+          if (rep) setPersonalReport(rep);
+          if (otherRep) setEnergyReport(otherRep);
+          else if (otherCampaign) setEnergyReport({ campaignId: ENERGY_CAMPAIGN, totalRows: 0, tierCounts: { inner_circle: 0, close: 0, warm: 0, cold: 0 }, callableCount: 0, phoneCount: 0, duplicatePhones: 0, duplicatePhoneGroups: [], quarantinedCount: 0, quarantinedReasons: {}, rejectedRows: 0, rejectionReasons: [], importedAt: otherCampaign.createdAt });
+        } else {
+          if (rep) setEnergyReport(rep);
+          if (otherRep) setPersonalReport(otherRep);
+        }
+
         setAttempts(atts);
         setAttemptsTotal(atts.length);
 
-        // Funnel: connects = connected + texted + calendar_sent + intro_offered + intro_made
         const connectOutcomes: CallOutcome[] = ["connected", "texted", "calendar_sent", "intro_offered", "intro_made"];
         const oppOutcomes: CallOutcome[] = ["intro_offered", "intro_made"];
         setConnectsTotal(atts.filter((a) => a.outcome && connectOutcomes.includes(a.outcome)).length);
@@ -158,17 +186,18 @@ function Index() {
           a.commitmentStatus !== "not_discussed"
         ).length);
 
+        // Queue counts — only for active campaign
+        const campaignItems = items.filter((qi) => qi.campaignId === campaignId);
         const counts: Record<string, number> = {};
-        for (const item of items) {
+        for (const item of campaignItems) {
           counts[item.queueStatus] = (counts[item.queueStatus] || 0) + 1;
         }
         setQueueCounts(counts);
 
-        // Pick next eligible contact
+        // Pick next eligible contact from active campaign
         const now = new Date().toISOString();
-        const eligible = items
+        const eligible = campaignItems
           .filter((qi) =>
-            qi.campaignId === "v9_relationship_calls" &&
             qi.queueStatus !== "suppressed" &&
             qi.queueStatus !== "completed" &&
             qi.queueStatus !== "attempted" &&
@@ -202,7 +231,7 @@ function Index() {
   const refreshNextContact = useCallback(() => {
     Promise.all([
       db.getAllQueueItems(),
-      db.getAllCallAttempts(),
+      db.getAttemptsByCampaign(campaignId),
     ]).then(([items, atts]) => {
       setAttempts(atts);
       setAttemptsTotal(atts.length);
@@ -214,14 +243,14 @@ function Index() {
         a.commitmentStatus !== "not_discussed"
       ).length);
 
+      const campaignItems = items.filter((qi) => qi.campaignId === campaignId);
       const counts: Record<string, number> = {};
-      for (const item of items) counts[item.queueStatus] = (counts[item.queueStatus] || 0) + 1;
+      for (const item of campaignItems) counts[item.queueStatus] = (counts[item.queueStatus] || 0) + 1;
       setQueueCounts(counts);
 
       const now = new Date().toISOString();
-      const eligible = items
+      const eligible = campaignItems
         .filter((qi) =>
-          qi.campaignId === "v9_relationship_calls" &&
           qi.queueStatus !== "suppressed" &&
           qi.queueStatus !== "completed" &&
           qi.queueStatus !== "attempted" &&
@@ -242,7 +271,7 @@ function Index() {
         setShowOutcomes(false);
       }
     });
-  }, []);
+  }, [campaignId]);
 
   // ── Initiate FaceTime Audio ──
   const startFaceTime = async () => {
@@ -303,11 +332,10 @@ function Index() {
     try { await audio.play(); } catch { setVmPlaying(false); toast.error("Audio blocked — tap again"); }
   };
 
-  // ── Save call outcome (always available) ──
+  // ── Save call outcome ──
   const logOutcome = async (outcome: CallOutcome) => {
     if (!nextContact || !nextQueueItem) return;
 
-    // Use the latest unlogged attempt, or create a manual one
     const latestAttempt = attempts
       .filter((a) => a.contactId === nextContact.id && a.outcome === null)
       .sort((a, b) => new Date(b.initiatedAt).getTime() - new Date(a.initiatedAt).getTime())[0];
@@ -324,7 +352,6 @@ function Index() {
         await Promise.all([db.updateCallAttempt(updatedAttempt), db.updateQueueItem(updatedQI)]);
       } catch { toast.error("Failed to save outcome"); return; }
     } else {
-      // No open attempt — create a manual log entry
       const manualAttempt: CallAttempt = {
         id: `att-manual-${crypto.randomUUID().slice(0, 8)}`,
         queueItemId: nextQueueItem.id,
@@ -404,13 +431,13 @@ function Index() {
     return true;
   };
 
-  // ── Soft Skip: random 5-21 slots down ──
+  // ── Soft Skip ──
   const softSkip = async () => {
     if (!nextQueueItem || !nextContact) return;
     const items = await db.getAllQueueItems();
     const now = new Date().toISOString();
     const eligible = items
-      .filter((qi) => qi.campaignId === "v9_relationship_calls" && qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" && (!qi.nextCallAt || qi.nextCallAt <= now))
+      .filter((qi) => qi.campaignId === campaignId && qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" && (!qi.nextCallAt || qi.nextCallAt <= now))
       .sort((a, b) => a.priority - b.priority);
     const curIdx = eligible.findIndex((qi) => qi.id === nextQueueItem.id);
     if (curIdx === -1 || eligible.length <= 1) return;
@@ -425,34 +452,21 @@ function Index() {
     refreshNextContact();
   };
 
-  // ── Warm Skip: to top of warm list ──
+  // ── Warm Skip ──
   const warmSkip = async () => {
     if (!nextQueueItem || !nextContact) return;
     const items = await db.getAllQueueItems();
     const now = new Date().toISOString();
     const filtered = items
-      .filter((qi) => qi.campaignId === "v9_relationship_calls" && qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" && (!qi.nextCallAt || qi.nextCallAt <= now))
+      .filter((qi) => qi.campaignId === campaignId && qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" && (!qi.nextCallAt || qi.nextCallAt <= now))
       .sort((a, b) => a.priority - b.priority);
-    // Find highest inner_circle priority and first warm priority
-    let warmPriority = -1;
-    for (const qi of filtered) {
-      const c = nextContact; // we need tier from contacts — but we have filtered items
-      // Use a simple heuristic: find the first non-inner_circle item's priority
-    }
-    // Actually, we can't easily get tier without contacts. Let me use priority gap approach:
-    // Sort eligible, find the last inner_circle, insert after it (or at position 0 if no inner_circle)
-    // But we need to know tiers... Let me load contacts
     const allContacts = await db.getAllContacts();
     const contactMap = new Map(allContacts.map((c) => [c.id, c]));
     const withTier = filtered.map((qi) => ({ qi, tier: contactMap.get(qi.contactId)?.tier }));
-    // Find the last inner_circle item
     const lastIC = withTier.filter((x) => x.tier === "inner_circle").pop();
     if (lastIC) {
-      // Insert right after last inner_circle
-      const newPriority = lastIC.qi.priority + 0.5;
-      await reorderInQueue(nextQueueItem, newPriority, "Warm skip — top of warm");
+      await reorderInQueue(nextQueueItem, lastIC.qi.priority + 0.5, "Warm skip — top of warm");
     } else {
-      // No inner_circle — insert at top
       const topPriority = filtered[0]?.priority ?? 0;
       await reorderInQueue(nextQueueItem, topPriority - 1, "Warm skip — top of warm (no IC)");
     }
@@ -460,7 +474,7 @@ function Index() {
     refreshNextContact();
   };
 
-  // ── Hard Skip: suppress from queue ──
+  // ── Hard Skip ──
   const hardSkip = async () => {
     if (!nextQueueItem || !nextContact) return;
     const ops: Promise<unknown>[] = [];
@@ -476,6 +490,24 @@ function Index() {
     refreshNextContact();
   };
 
+  // ── Import energy contacts ──
+  const importEnergy = async () => {
+    setAutoImporting(true);
+    try {
+      const res = await fetch("/energy-contacts.csv");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const csv = await res.text();
+      const result = await importEnergyCSV(csv);
+      await persistEnergyImport(result);
+      setEnergyReport(result.report);
+    } catch (err) {
+      console.error("Energy import failed:", err);
+      toast.error("Failed to import energy contacts");
+    } finally {
+      setAutoImporting(false);
+    }
+  };
+
   // ── Running numbers ──
   const remaining = (queueCounts["queued"] || 0) + (queueCounts["initiated_unconfirmed"] || 0) + (queueCounts["outcome_required"] || 0);
 
@@ -489,7 +521,7 @@ function Index() {
           </p>
           {autoImporting && (
             <p className="mt-2 text-xs text-muted-foreground">
-              29,762 contacts loading — this takes a few seconds
+              This takes a few seconds
             </p>
           )}
         </div>
@@ -498,7 +530,7 @@ function Index() {
   }
 
   return (
-    <div className="min-h-screen pb-10">
+    <div className="min-h-screen pb-24">
       {/* ── Motivation ── */}
       <div className="mx-auto mt-10 max-w-md px-6">
         <div className="rounded-2xl border border-accent/40 bg-gradient-to-br from-accent/10 to-primary/5 p-5">
@@ -537,14 +569,25 @@ function Index() {
       {!report ? (
         <div className="mx-auto mt-14 max-w-sm px-6 text-center">
           <p className="text-sm text-muted-foreground">
-            No V9 data imported yet.
+            {activeTab === "personal"
+              ? "No V9 data imported yet."
+              : "No energy contacts loaded yet."}
           </p>
-          <Link
-            to="/powerdialer/import"
-            className="mt-4 flex w-full items-center justify-center rounded-2xl bg-primary px-6 py-4 font-medium text-primary-foreground"
-          >
-            Import V9 CSV →
-          </Link>
+          {activeTab === "energy" ? (
+            <button
+              onClick={importEnergy}
+              className="mt-4 flex w-full items-center justify-center rounded-2xl bg-primary px-6 py-4 font-medium text-primary-foreground"
+            >
+              Load Energy Contacts →
+            </button>
+          ) : (
+            <Link
+              to="/powerdialer/import"
+              className="mt-4 flex w-full items-center justify-center rounded-2xl bg-primary px-6 py-4 font-medium text-primary-foreground"
+            >
+              Import V9 CSV →
+            </Link>
+          )}
         </div>
       ) : (
         <>
@@ -573,7 +616,11 @@ function Index() {
                     {nextContact.title ? `${nextContact.title} · ` : ""}{nextContact.company}
                   </p>
                 )}
-                {nextContact.phone && <p className="mt-1.5 font-mono text-sm">{nextContact.phone}</p>}
+                {nextContact.phone ? (
+                  <p className="mt-1.5 font-mono text-sm">{nextContact.phone}</p>
+                ) : (
+                  <p className="mt-1.5 text-xs text-red-400 font-mono">No phone — needs GCal lookup</p>
+                )}
                 {nextContact.email && (
                   <a href={`mailto:${nextContact.email}`} className="block text-xs text-blue-400 hover:underline">{nextContact.email}</a>
                 )}
@@ -601,10 +648,14 @@ function Index() {
               >
                 <span className="text-base">Start FaceTime Audio</span>
               </button>
+              {!nextContact.phone && (
+                <p className="text-center text-[10px] text-muted-foreground">
+                  Phone number needed — check Google Calendar bookings
+                </p>
+              )}
 
               {/* ROW 1: Text → Email → gCal */}
               <div className="grid grid-cols-3 gap-2">
-                {/* Text column */}
                 <div className="space-y-1.5">
                   {nextContact.phone ? (
                     <a href={`sms:${nextContact.phone}`} className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30 transition-colors">Text</a>
@@ -617,7 +668,6 @@ function Index() {
                   </button>
                 </div>
 
-                {/* Email column */}
                 <div className="space-y-1.5">
                   {nextContact.email ? (
                     <a href={`mailto:${nextContact.email}?subject=${encodeURIComponent(nextContact.fullName.split(" ")[0])}%20%3C%3E%20Chino%20%E2%80%94%20catch%20up`} className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30 transition-colors">Email</a>
@@ -630,7 +680,6 @@ function Index() {
                   </button>
                 </div>
 
-                {/* gCal column — always visible even without email */}
                 <div className="space-y-1.5">
                   <a
                     href={buildGCalUrl(nextContact.fullName, nextContact.email || undefined, nextContact.phone || undefined)}
@@ -644,7 +693,7 @@ function Index() {
                 </div>
               </div>
 
-              {/* ROW 2: VM Drop (split: Auto | Manual) */}
+              {/* ROW 2: VM Drop */}
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1.5">
                   <button
@@ -676,7 +725,7 @@ function Index() {
                 </div>
               </div>
 
-              {/* Post-call follow-up: Intro Offered + Call again later */}
+              {/* Post-call follow-up */}
               {showOutcomes && (
                 <div className="grid grid-cols-2 gap-2">
                   <button type="button" onClick={introOffered}
@@ -734,10 +783,38 @@ function Index() {
 
           {/* ── Footer ── */}
           <p className="mx-auto mt-4 max-w-md px-6 text-center text-[10px] text-muted-foreground">
-            Imported {new Date(report.importedAt).toLocaleString()} · {report.totalRows.toLocaleString()} rows
+            {report.importedAt ? `Imported ${new Date(report.importedAt).toLocaleString()} · ${report.totalRows.toLocaleString()} contacts` : "Energy contacts"}
           </p>
         </>
       )}
+
+      {/* ── Tab bar ── */}
+      <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-border bg-background/95 backdrop-blur">
+        <div className="mx-auto flex max-w-md">
+          <button
+            type="button"
+            onClick={() => setActiveTab("personal")}
+            className={`flex-1 py-3 text-center text-sm font-medium transition-colors ${
+              activeTab === "personal"
+                ? "border-t-2 border-primary text-primary -mt-[1px]"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Personal Contacts
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("energy")}
+            className={`flex-1 py-3 text-center text-sm font-medium transition-colors ${
+              activeTab === "energy"
+                ? "border-t-2 border-emerald-500 text-emerald-400 -mt-[1px]"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Energy Contacts
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

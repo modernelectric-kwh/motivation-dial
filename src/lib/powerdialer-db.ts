@@ -200,6 +200,52 @@ export const db = {
     }
   },
 
+  /** Clear queue items and call attempts for a single campaign without touching other data. */
+  async clearCampaignData(campaignId: string): Promise<void> {
+    const db = await openDB();
+    // Clear queue items for this campaign
+    const qiTx = db.transaction(STORES.queueItems, "readwrite");
+    const qiStore = qiTx.objectStore(STORES.queueItems);
+    const qiIndex = qiStore.index("campaignId");
+    const qiReq = qiIndex.getAllKeys(campaignId);
+    await new Promise<void>((resolve, reject) => {
+      qiReq.onsuccess = () => {
+        for (const key of qiReq.result) qiStore.delete(key);
+      };
+      qiTx.oncomplete = () => resolve();
+      qiTx.onerror = () => reject(qiTx.error);
+    });
+
+    // Clear call attempts for this campaign
+    const caTx = db.transaction(STORES.callAttempts, "readwrite");
+    const caStore = caTx.objectStore(STORES.callAttempts);
+    const caIndex = caStore.index("campaignId");
+    const caReq = caIndex.getAllKeys(campaignId);
+    await new Promise<void>((resolve, reject) => {
+      caReq.onsuccess = () => {
+        for (const key of caReq.result) caStore.delete(key);
+      };
+      caTx.oncomplete = () => resolve();
+      caTx.onerror = () => reject(caTx.error);
+    });
+  },
+
+  /** Upsert a batch of contacts without clearing existing data. */
+  async upsertContactsBatch(contacts: V9Contact[]): Promise<void> {
+    const BATCH = 500;
+    for (let i = 0; i < contacts.length; i += BATCH) {
+      await putAll(STORES.contacts, contacts.slice(i, i + BATCH));
+    }
+  },
+
+  /** Upsert a batch of queue items without clearing. */
+  async upsertQueueItemsBatch(items: QueueItem[]): Promise<void> {
+    const BATCH = 500;
+    for (let i = 0; i < items.length; i += BATCH) {
+      await putAll(STORES.queueItems, items.slice(i, i + BATCH));
+    }
+  },
+
   // ── Contacts ──
   getContact: (id: string) => getOne<V9Contact>(STORES.contacts, id),
   getAllContacts: () => getAll<V9Contact>(STORES.contacts),
@@ -242,6 +288,15 @@ export const db = {
     const reports = await getAll<ImportReport>(STORES.importReports);
     if (reports.length === 0) return undefined;
     return reports.sort(
+      (a, b) => new Date(b.importedAt).getTime() - new Date(a.importedAt).getTime(),
+    )[0];
+  },
+  /** Get the latest import report for a specific campaign. */
+  getLatestImportReportForCampaign: async (campaignId: string): Promise<ImportReport | undefined> => {
+    const reports = await getAll<ImportReport>(STORES.importReports);
+    const campaignReports = reports.filter((r) => r.campaignId === campaignId);
+    if (campaignReports.length === 0) return undefined;
+    return campaignReports.sort(
       (a, b) => new Date(b.importedAt).getTime() - new Date(a.importedAt).getTime(),
     )[0];
   },
