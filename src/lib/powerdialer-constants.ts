@@ -63,3 +63,12 @@ export const COMMITMENT_COLORS: Record<CommitmentStatus, string> = {
   needs_follow_up: "text-blue-400",
   not_discussed: "text-zinc-600",
 };
+
+// ── Campaign IDs ──
+export const PERSONAL_CAMPAIGN = "v9_relationship_calls";
+export const ENERGY_CAMPAIGN = "v9_energy_calls";
+
+export const CAMPAIGNS = [
+  { id: PERSONAL_CAMPAIGN, label: "Personal" },
+  { id: ENERGY_CAMPAIGN, label: "Energy" },
+] as const;

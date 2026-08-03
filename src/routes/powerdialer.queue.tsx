@@ -5,14 +5,8 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { db } from "@/lib/powerdialer-db";
 import type { V9Contact, QueueItem, V9Tier } from "@/lib/powerdialer-types";
-import { STATUS_COLORS, TIER_META } from "@/lib/powerdialer-constants";
-
-const PERSONAL_CAMPAIGN = "v9_relationship_calls";
-const ENERGY_CAMPAIGN = "v9_energy_calls";
-const CAMPAIGNS = [
-  { id: PERSONAL_CAMPAIGN, label: "Personal" },
-  { id: ENERGY_CAMPAIGN, label: "Energy" },
-] as const;
+import { STATUS_COLORS, TIER_META, PERSONAL_CAMPAIGN, CAMPAIGNS } from "@/lib/powerdialer-constants";
+import { CampaignSelector } from "@/components/CampaignSelector";
 
 export const Route = createFileRoute("/powerdialer/queue")({
   head: () => ({
@@ -34,17 +28,8 @@ function QueuePage() {
   const [campaignId, setCampaignId] = useState(PERSONAL_CAMPAIGN);
 
   useEffect(() => {
-    Promise.all([db.getAllQueueItems(), db.getAllContacts()])
-      .then(([items, con]) => {
-        // Filter to active campaign items only
-        const now = new Date().toISOString();
-        const active = items.filter((qi) =>
-          qi.campaignId === campaignId &&
-          qi.queueStatus !== "suppressed" &&
-          qi.queueStatus !== "completed" &&
-          qi.queueStatus !== "attempted" &&
-          (!qi.nextCallAt || qi.nextCallAt <= now)
-        );
+    Promise.all([db.filterEligibleQueueItems(campaignId), db.getAllContacts()])
+      .then(([active, con]) => {
         setQueueItems(active);
         setContacts(con);
       })
@@ -98,21 +83,8 @@ function QueuePage() {
         </div>
         <h1 className="mt-1 font-serif text-2xl">Queue</h1>
         <p className="text-xs text-muted-foreground">{rows.length} active · Ordered by priority</p>
-        <div className="mt-2 flex gap-1.5">
-          {CAMPAIGNS.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => setCampaignId(c.id)}
-              className={`rounded-full border px-3 py-1 text-[10px] font-medium transition-colors ${
-                campaignId === c.id
-                  ? "border-primary bg-primary/20 text-primary"
-                  : "border-border text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {c.label}
-            </button>
-          ))}
+        <div className="mt-2">
+          <CampaignSelector campaignId={campaignId} onChange={setCampaignId} />
         </div>
       </header>
 

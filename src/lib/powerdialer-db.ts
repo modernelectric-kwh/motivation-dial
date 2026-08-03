@@ -230,6 +230,25 @@ export const db = {
     });
   },
 
+  /** Filter queue items eligible for dialing in a campaign:
+   *  not suppressed/completed/attempted, and past any cooldown. */
+  async filterEligibleQueueItems(
+    campaignId: string,
+    now: string = new Date().toISOString(),
+  ): Promise<QueueItem[]> {
+    const items = await this.getAllQueueItems();
+    return items
+      .filter(
+        (qi) =>
+          qi.campaignId === campaignId &&
+          qi.queueStatus !== "suppressed" &&
+          qi.queueStatus !== "completed" &&
+          qi.queueStatus !== "attempted" &&
+          (!qi.nextCallAt || qi.nextCallAt <= now),
+      )
+      .sort((a, b) => a.priority - b.priority);
+  },
+
   /** Upsert a batch of contacts without clearing existing data.
    *  Merges with existing contact data to avoid overwriting richer fields
    *  (e.g. personal CSV company/title) with empty strings from energy CSV. */
@@ -238,6 +257,7 @@ export const db = {
     // Build map of existing contacts that share IDs with the incoming batch
     const existingMap = new Map<string, V9Contact>();
     const ids = contacts.map((c) => c.id);
+    const MERGE_FIELDS = ["company", "title", "headline", "linkedinUrl", "location", "industry", "notes"] as const;
     // Read existing contacts in chunks for IndexedDB efficiency
     const READ_BATCH = 200;
     for (let i = 0; i < ids.length; i += READ_BATCH) {
@@ -253,9 +273,6 @@ export const db = {
           }),
         ),
       );
-      await new Promise<void>((resolve) => {
-        tx.oncomplete = () => resolve();
-      });
       for (const r of results) {
         if (r) existingMap.set(r.id, r);
       }
@@ -270,16 +287,11 @@ export const db = {
       for (const contact of batch) {
         const existing = existingMap.get(contact.id);
         if (existing) {
-          store.put({
-            ...contact,
-            company: contact.company || existing.company,
-            title: contact.title || existing.title,
-            headline: contact.headline || existing.headline,
-            linkedinUrl: contact.linkedinUrl || existing.linkedinUrl,
-            location: contact.location || existing.location,
-            industry: contact.industry || existing.industry,
-            notes: contact.notes || existing.notes,
-          });
+          const merged = { ...contact } as V9Contact & Record<string, string>;
+          for (const f of MERGE_FIELDS) {
+            merged[f] = (contact as any)[f] || (existing as any)[f];
+          }
+          store.put(merged);
         } else {
           store.put(contact);
         }

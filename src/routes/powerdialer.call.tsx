@@ -2,19 +2,13 @@
 // Contact card + Start FaceTime Audio + quick actions with inline outcomes + skip row.
 
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { db } from "@/lib/powerdialer-db";
 import type { V9Contact, QueueItem, CallAttempt, CallOutcome } from "@/lib/powerdialer-types";
-import { TIER_META } from "@/lib/powerdialer-constants";
+import { TIER_META, PERSONAL_CAMPAIGN } from "@/lib/powerdialer-constants";
 import { loadVoicemailBlob } from "@/lib/vm-storage";
 import { toast } from "sonner";
-
-const PERSONAL_CAMPAIGN = "v9_relationship_calls";
-const ENERGY_CAMPAIGN = "v9_energy_calls";
-const CAMPAIGNS = [
-  { id: PERSONAL_CAMPAIGN, label: "Personal" },
-  { id: ENERGY_CAMPAIGN, label: "Energy" },
-] as const;
+import { CampaignSelector } from "@/components/CampaignSelector";
 
 export const Route = createFileRoute("/powerdialer/call")({
   head: () => ({
@@ -73,6 +67,8 @@ function getLatestUnresolvedAttempt(attempts: CallAttempt[], contactId: string):
 function PowerdialerCall() {
   const [loading, setLoading] = useState(true);
   const [campaignId, setCampaignId] = useState(PERSONAL_CAMPAIGN);
+  const campaignIdRef = useRef(campaignId);
+  campaignIdRef.current = campaignId;
   const [contacts, setContacts] = useState<V9Contact[]>([]);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
@@ -84,24 +80,15 @@ function PowerdialerCall() {
 
   useEffect(() => {
     loadVoicemailBlob().then((b) => setVmBlob(b));
-    Promise.all([db.getAllContacts(), db.getAllQueueItems(), db.getAllCallAttempts()])
-      .then(([allContacts, allItems, atts]) => {
+    Promise.all([db.getAllContacts(), db.filterEligibleQueueItems(campaignId), db.getAllCallAttempts()])
+      .then(([allContacts, eligibleItems, atts]) => {
         setAttempts(atts);
-        const now = new Date().toISOString();
-        const v9Items = allItems.filter((qi) =>
-          qi.campaignId === campaignId &&
-          qi.queueStatus !== "suppressed" &&
-          qi.queueStatus !== "completed" &&
-          qi.queueStatus !== "attempted" &&
-          (!qi.nextCallAt || qi.nextCallAt <= now)
-        );
-        v9Items.sort((a, b) => a.priority - b.priority);
         const contactMap = new Map(allContacts.map((c) => [c.id, c]));
-        const ordered = v9Items.map((qi) => contactMap.get(qi.contactId)).filter(Boolean) as V9Contact[];
-        setQueueItems(v9Items);
+        const ordered = eligibleItems.map((qi) => contactMap.get(qi.contactId)).filter(Boolean) as V9Contact[];
+        setQueueItems(eligibleItems);
         setContacts(ordered);
-        if (v9Items.length > 0) {
-          const st = v9Items[0].queueStatus;
+        if (eligibleItems.length > 0) {
+          const st = eligibleItems[0].queueStatus;
           setCalled(st === "initiated_unconfirmed" || st === "outcome_required");
         }
         setLoading(false);
@@ -126,19 +113,13 @@ function PowerdialerCall() {
     setTouchExpanded(false);
   };
 
-  const refreshCurrent = () => {
-    db.getAllQueueItems().then((allItems) => {
-      const now = new Date().toISOString();
-      const v9Items = allItems.filter((qi) =>
-        qi.campaignId === campaignId &&
-        qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" &&
-        (!qi.nextCallAt || qi.nextCallAt <= now)
-      ).sort((a, b) => a.priority - b.priority);
-      setQueueItems(v9Items);
-      if (currentIdx >= v9Items.length) setCurrentIdx(0);
+  const refreshCurrent = useCallback(() => {
+    db.filterEligibleQueueItems(campaignIdRef.current).then((eligibleItems) => {
+      setQueueItems(eligibleItems);
+      if (currentIdx >= eligibleItems.length) setCurrentIdx(0);
     });
     db.getAllCallAttempts().then(setAttempts);
-  };
+  }, [currentIdx]);
 
   // ── Start FaceTime Audio ──
   const launchCall = async () => {
@@ -232,9 +213,8 @@ function PowerdialerCall() {
 
   const softSkip = async () => {
     if (!queueItem || !contact) return;
-    const items = await db.getAllQueueItems();
-    const now = new Date().toISOString();
-    const eligible = items.filter((qi) => qi.campaignId === campaignId && qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" && (!qi.nextCallAt || qi.nextCallAt <= now)).sort((a, b) => a.priority - b.priority);
+    const items = await db.filterEligibleQueueItems(campaignIdRef.current);
+    const eligible = items;
     const curIdx = eligible.findIndex((qi) => qi.id === queueItem.id);
     if (curIdx === -1 || eligible.length <= 1) return;
     const shift = Math.floor(Math.random() * 17) + 5;
@@ -249,9 +229,7 @@ function PowerdialerCall() {
 
   const warmSkip = async () => {
     if (!queueItem || !contact) return;
-    const [items, allContacts] = await Promise.all([db.getAllQueueItems(), db.getAllContacts()]);
-    const now = new Date().toISOString();
-    const filtered = items.filter((qi) => qi.campaignId === campaignId && qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" && (!qi.nextCallAt || qi.nextCallAt <= now)).sort((a, b) => a.priority - b.priority);
+    const [filtered, allContacts] = await Promise.all([db.filterEligibleQueueItems(campaignIdRef.current), db.getAllContacts()]);
     const contactMap = new Map(allContacts.map((c) => [c.id, c]));
     const withTier = filtered.map((qi) => ({ qi, tier: contactMap.get(qi.contactId)?.tier }));
     const lastIC = withTier.filter((x) => x.tier === "inner_circle").pop();
@@ -285,21 +263,11 @@ function PowerdialerCall() {
           <Link to="/">← Dashboard</Link>
           <span className="uppercase tracking-[0.2em]">{currentIdx + 1} / {contacts.length}</span>
         </div>
-        <div className="mt-2 flex gap-1.5">
-          {CAMPAIGNS.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => { setCampaignId(c.id); setCurrentIdx(0); setCalled(false); }}
-              className={`rounded-full border px-3 py-1 text-[10px] font-medium transition-colors ${
-                campaignId === c.id
-                  ? "border-primary bg-primary/20 text-primary"
-                  : "border-border text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {c.label}
-            </button>
-          ))}
+        <div className="mt-2">
+          <CampaignSelector
+            campaignId={campaignId}
+            onChange={(id) => { setCampaignId(id); setCurrentIdx(0); setCalled(false); }}
+          />
         </div>
       </header>
 

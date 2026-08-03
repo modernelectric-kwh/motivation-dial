@@ -67,8 +67,7 @@ function buildGCalUrl(name: string, email: string | undefined, phone: string | u
 }
 
 // ── Campaign config ──
-const PERSONAL_CAMPAIGN = "v9_relationship_calls";
-const ENERGY_CAMPAIGN = "v9_energy_calls";
+import { PERSONAL_CAMPAIGN, ENERGY_CAMPAIGN } from "@/lib/powerdialer-constants";
 
 type TabId = "personal" | "energy";
 
@@ -163,15 +162,16 @@ function Index() {
     const cid = campaignIdRef.current;
     const tab = activeTabRef.current;
 
+    const otherId = tab === "personal" ? ENERGY_CAMPAIGN : PERSONAL_CAMPAIGN;
+
     Promise.all([
       db.getLatestImportReportForCampaign(cid),
       db.getCampaign(cid),
       db.getAllQueueItems(),
       db.getAttemptsByCampaign(cid),
       db.getAllContacts(),
-      // Also load the other campaign's report so both tabs show data
-      db.getLatestImportReportForCampaign(tab === "personal" ? ENERGY_CAMPAIGN : PERSONAL_CAMPAIGN),
-      db.getCampaign(tab === "personal" ? ENERGY_CAMPAIGN : PERSONAL_CAMPAIGN).catch(() => null),
+      db.getLatestImportReportForCampaign(otherId),
+      db.getCampaign(otherId).catch(() => null),
     ])
       .then(([rep, cam, items, atts, allContacts, otherRep, otherCampaign]) => {
         // Store reports for both tabs
