@@ -6,7 +6,11 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { db } from "@/lib/powerdialer-db";
 import type { CallAttempt, V9Contact, CallOutcome } from "@/lib/powerdialer-types";
-import { OUTCOME_COLORS } from "@/lib/powerdialer-constants";
+import { OUTCOME_COLORS, PERSONAL_CAMPAIGN, ENERGY_CAMPAIGN } from "@/lib/powerdialer-constants";
+const CAMPAIGN_LABEL: Record<string, string> = {
+  [PERSONAL_CAMPAIGN]: "Personal",
+  [ENERGY_CAMPAIGN]: "Energy",
+};
 
 export const Route = createFileRoute("/powerdialer/log")({
   head: () => ({
@@ -26,14 +30,18 @@ function CallLog() {
   const [showOnlyToday, setShowOnlyToday] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     Promise.all([db.getAllCallAttempts(), db.getAllContacts()])
       .then(([att, con]) => {
+        if (cancelled) return;
         setAttempts(att.sort((a, b) =>
           new Date(b.initiatedAt).getTime() - new Date(a.initiatedAt).getTime(),
         ));
         setContacts(con);
       })
-      .finally(() => setLoading(false));
+      .catch((err) => console.error("Failed to load call log:", err))
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   const contactMap = useMemo(
@@ -112,7 +120,12 @@ function CallLog() {
                 <li key={a.id} className={`rounded-2xl border p-4 ${a.outcome ? "border-border bg-card" : "border-amber-500/20 bg-amber-500/5"}`}>
                   <div className="flex items-start justify-between">
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{c?.fullName || a.contactId.slice(0, 8)}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-sm font-medium">{c?.fullName || a.contactId.slice(0, 8)}</p>
+                        <span className="shrink-0 rounded-full border border-border px-1.5 py-px text-[9px] text-muted-foreground">
+                          {CAMPAIGN_LABEL[a.campaignId] || a.campaignId}
+                        </span>
+                      </div>
                       <p className="text-[10px] text-muted-foreground">
                         {c?.company || ""}{c?.tier ? ` · ${c.tier.replace("_", " ")}` : ""}
                       </p>

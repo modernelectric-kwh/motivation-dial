@@ -502,7 +502,6 @@ function Index() {
 
   // ── Import energy contacts ──
   const importEnergy = async () => {
-    setAutoImporting(true);
     try {
       const res = await fetch("/energy-contacts.csv");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -514,8 +513,6 @@ function Index() {
     } catch (err) {
       console.error("Energy import failed:", err);
       toast.error("Failed to import energy contacts");
-    } finally {
-      setAutoImporting(false);
     }
   };
 
@@ -523,7 +520,7 @@ function Index() {
   const remaining = (queueCounts["queued"] || 0) + (queueCounts["initiated_unconfirmed"] || 0) + (queueCounts["outcome_required"] || 0);
 
   // ── Loading / auto-importing ──
-  if (loading || autoImporting) {
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
@@ -627,11 +624,7 @@ function Index() {
                     {nextContact.title ? `${nextContact.title} · ` : ""}{nextContact.company}
                   </p>
                 )}
-                {nextContact.phone ? (
-                  <p className="mt-1.5 font-mono text-sm">{nextContact.phone}</p>
-                ) : (
-                  <p className="mt-1.5 text-xs text-red-400 font-mono">No phone — needs GCal lookup</p>
-                )}
+                <p className="mt-1.5 font-mono text-sm">{nextContact.phone}</p>
                 {nextContact.email && (
                   <a href={`mailto:${nextContact.email}`} className="block text-xs text-blue-400 hover:underline">{nextContact.email}</a>
                 )}
@@ -659,11 +652,7 @@ function Index() {
               >
                 <span className="text-base">Start FaceTime Audio</span>
               </button>
-              {!nextContact.phone && (
-                <p className="text-center text-[10px] text-muted-foreground">
-                  Phone number needed — check Google Calendar bookings
-                </p>
-              )}
+
 
               {/* ROW 1: Text → Email → gCal */}
               <div className="grid grid-cols-3 gap-2">
