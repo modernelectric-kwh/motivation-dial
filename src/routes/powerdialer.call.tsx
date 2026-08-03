@@ -9,6 +9,13 @@ import { TIER_META } from "@/lib/powerdialer-constants";
 import { loadVoicemailBlob } from "@/lib/vm-storage";
 import { toast } from "sonner";
 
+const PERSONAL_CAMPAIGN = "v9_relationship_calls";
+const ENERGY_CAMPAIGN = "v9_energy_calls";
+const CAMPAIGNS = [
+  { id: PERSONAL_CAMPAIGN, label: "Personal" },
+  { id: ENERGY_CAMPAIGN, label: "Energy" },
+] as const;
+
 export const Route = createFileRoute("/powerdialer/call")({
   head: () => ({
     meta: [
@@ -65,6 +72,7 @@ function getLatestUnresolvedAttempt(attempts: CallAttempt[], contactId: string):
 
 function PowerdialerCall() {
   const [loading, setLoading] = useState(true);
+  const [campaignId, setCampaignId] = useState(PERSONAL_CAMPAIGN);
   const [contacts, setContacts] = useState<V9Contact[]>([]);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
@@ -81,7 +89,7 @@ function PowerdialerCall() {
         setAttempts(atts);
         const now = new Date().toISOString();
         const v9Items = allItems.filter((qi) =>
-          qi.campaignId === "v9_relationship_calls" &&
+          qi.campaignId === campaignId &&
           qi.queueStatus !== "suppressed" &&
           qi.queueStatus !== "completed" &&
           qi.queueStatus !== "attempted" &&
@@ -98,7 +106,7 @@ function PowerdialerCall() {
         }
         setLoading(false);
       }).catch(() => setLoading(false));
-  }, []);
+  }, [campaignId]);
 
   const contact = contacts[currentIdx];
   const queueItem = queueItems[currentIdx];
@@ -122,7 +130,7 @@ function PowerdialerCall() {
     db.getAllQueueItems().then((allItems) => {
       const now = new Date().toISOString();
       const v9Items = allItems.filter((qi) =>
-        qi.campaignId === "v9_relationship_calls" &&
+        qi.campaignId === campaignId &&
         qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" &&
         (!qi.nextCallAt || qi.nextCallAt <= now)
       ).sort((a, b) => a.priority - b.priority);
@@ -226,7 +234,7 @@ function PowerdialerCall() {
     if (!queueItem || !contact) return;
     const items = await db.getAllQueueItems();
     const now = new Date().toISOString();
-    const eligible = items.filter((qi) => qi.campaignId === "v9_relationship_calls" && qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" && (!qi.nextCallAt || qi.nextCallAt <= now)).sort((a, b) => a.priority - b.priority);
+    const eligible = items.filter((qi) => qi.campaignId === campaignId && qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" && (!qi.nextCallAt || qi.nextCallAt <= now)).sort((a, b) => a.priority - b.priority);
     const curIdx = eligible.findIndex((qi) => qi.id === queueItem.id);
     if (curIdx === -1 || eligible.length <= 1) return;
     const shift = Math.floor(Math.random() * 17) + 5;
@@ -243,7 +251,7 @@ function PowerdialerCall() {
     if (!queueItem || !contact) return;
     const [items, allContacts] = await Promise.all([db.getAllQueueItems(), db.getAllContacts()]);
     const now = new Date().toISOString();
-    const filtered = items.filter((qi) => qi.campaignId === "v9_relationship_calls" && qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" && (!qi.nextCallAt || qi.nextCallAt <= now)).sort((a, b) => a.priority - b.priority);
+    const filtered = items.filter((qi) => qi.campaignId === campaignId && qi.queueStatus !== "suppressed" && qi.queueStatus !== "completed" && qi.queueStatus !== "attempted" && (!qi.nextCallAt || qi.nextCallAt <= now)).sort((a, b) => a.priority - b.priority);
     const contactMap = new Map(allContacts.map((c) => [c.id, c]));
     const withTier = filtered.map((qi) => ({ qi, tier: contactMap.get(qi.contactId)?.tier }));
     const lastIC = withTier.filter((x) => x.tier === "inner_circle").pop();
@@ -276,6 +284,22 @@ function PowerdialerCall() {
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <Link to="/">← Dashboard</Link>
           <span className="uppercase tracking-[0.2em]">{currentIdx + 1} / {contacts.length}</span>
+        </div>
+        <div className="mt-2 flex gap-1.5">
+          {CAMPAIGNS.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => { setCampaignId(c.id); setCurrentIdx(0); setCalled(false); }}
+              className={`rounded-full border px-3 py-1 text-[10px] font-medium transition-colors ${
+                campaignId === c.id
+                  ? "border-primary bg-primary/20 text-primary"
+                  : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {c.label}
+            </button>
+          ))}
         </div>
       </header>
 
@@ -315,7 +339,7 @@ function PowerdialerCall() {
           <div className="space-y-1.5">
             {contact.email ? <a href={`mailto:${contact.email}?subject=${encodeURIComponent(contact.fullName.split(" ")[0])}%20%3C%3E%20Chino%20%E2%80%94%20catch%20up`} className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30">Email</a>
               : <span className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2.5 text-xs text-muted-foreground/30">Email</span>}
-            <button type="button" onClick={() => logOutcome("texted")} className="w-full rounded-lg border border-sky-500/40 bg-sky-500/10 px-1.5 py-1.5 text-[10px] font-medium text-sky-400 active:scale-95">I emailed</button>
+            <button type="button" onClick={() => logOutcome("email_requested")} className="w-full rounded-lg border border-sky-500/40 bg-sky-500/10 px-1.5 py-1.5 text-[10px] font-medium text-sky-400 active:scale-95">I emailed</button>
           </div>
           <div className="space-y-1.5">
             <a href={buildGCalUrl(contact.fullName, contact.email || undefined, contact.phone || undefined)} target="_blank" rel="noreferrer" className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground/30">gCal</a>

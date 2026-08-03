@@ -378,9 +378,9 @@ export async function importV9CSV(text: string): Promise<ImportResult> {
  * the import report. Call after {@link importV9CSV}.
  */
 export async function persistImport(result: ImportResult): Promise<void> {
-  await db.clearAllData();
-  await db.replaceContacts(result.contacts);
-  await db.replaceQueueItems(result.queueItems);
+  await db.clearCampaignData("v9_relationship_calls");
+  await db.upsertContactsBatch(result.contacts);
+  await db.upsertQueueItemsBatch(result.queueItems);
   for (const campaign of result.campaigns) {
     await db.saveCampaign(campaign);
   }

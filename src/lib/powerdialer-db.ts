@@ -230,11 +230,64 @@ export const db = {
     });
   },
 
-  /** Upsert a batch of contacts without clearing existing data. */
+  /** Upsert a batch of contacts without clearing existing data.
+   *  Merges with existing contact data to avoid overwriting richer fields
+   *  (e.g. personal CSV company/title) with empty strings from energy CSV. */
   async upsertContactsBatch(contacts: V9Contact[]): Promise<void> {
+    const db = await openDB();
+    // Build map of existing contacts that share IDs with the incoming batch
+    const existingMap = new Map<string, V9Contact>();
+    const ids = contacts.map((c) => c.id);
+    // Read existing contacts in chunks for IndexedDB efficiency
+    const READ_BATCH = 200;
+    for (let i = 0; i < ids.length; i += READ_BATCH) {
+      const chunk = ids.slice(i, i + READ_BATCH);
+      const tx = db.transaction(STORES.contacts, "readonly");
+      const store = tx.objectStore(STORES.contacts);
+      const results = await Promise.all(
+        chunk.map((id) =>
+          new Promise<V9Contact | undefined>((resolve) => {
+            const req = store.get(id);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => resolve(undefined);
+          }),
+        ),
+      );
+      await new Promise<void>((resolve) => {
+        tx.oncomplete = () => resolve();
+      });
+      for (const r of results) {
+        if (r) existingMap.set(r.id, r);
+      }
+    }
+
+    // Write with merging — preserve non-empty existing fields
     const BATCH = 500;
     for (let i = 0; i < contacts.length; i += BATCH) {
-      await putAll(STORES.contacts, contacts.slice(i, i + BATCH));
+      const batch = contacts.slice(i, i + BATCH);
+      const tx = db.transaction(STORES.contacts, "readwrite");
+      const store = tx.objectStore(STORES.contacts);
+      for (const contact of batch) {
+        const existing = existingMap.get(contact.id);
+        if (existing) {
+          store.put({
+            ...contact,
+            company: contact.company || existing.company,
+            title: contact.title || existing.title,
+            headline: contact.headline || existing.headline,
+            linkedinUrl: contact.linkedinUrl || existing.linkedinUrl,
+            location: contact.location || existing.location,
+            industry: contact.industry || existing.industry,
+            notes: contact.notes || existing.notes,
+          });
+        } else {
+          store.put(contact);
+        }
+      }
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
     }
   },
 

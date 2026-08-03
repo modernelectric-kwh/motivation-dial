@@ -3,7 +3,7 @@
 // Same experience on both tabs: contact card, Start FaceTime Audio, quick actions, skip.
 
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { db } from "@/lib/powerdialer-db";
 import { importV9CSV, persistImport, importEnergyCSV, persistEnergyImport } from "@/lib/v9-import";
 import type { ImportReport, Campaign, V9Contact, QueueItem, CallAttempt, CallOutcome } from "@/lib/powerdialer-types";
@@ -76,6 +76,12 @@ function Index() {
   // ── Tab state ──
   const [activeTab, setActiveTab] = useState<TabId>("personal");
   const campaignId = activeTab === "personal" ? PERSONAL_CAMPAIGN : ENERGY_CAMPAIGN;
+
+  // Refs to avoid stale closures in loadDashboard / refreshNextContact
+  const campaignIdRef = useRef(campaignId);
+  const activeTabRef = useRef(activeTab);
+  campaignIdRef.current = campaignId;
+  activeTabRef.current = activeTab;
 
   // ── Dashboard data ──
   const [loading, setLoading] = useState(true);
@@ -153,20 +159,23 @@ function Index() {
     loadDashboard();
   }, [activeTab, energyReport]);
 
-  const loadDashboard = () =>
+  const loadDashboard = useCallback(() => {
+    const cid = campaignIdRef.current;
+    const tab = activeTabRef.current;
+
     Promise.all([
-      db.getLatestImportReportForCampaign(campaignId),
-      db.getCampaign(campaignId),
+      db.getLatestImportReportForCampaign(cid),
+      db.getCampaign(cid),
       db.getAllQueueItems(),
-      db.getAttemptsByCampaign(campaignId),
+      db.getAttemptsByCampaign(cid),
       db.getAllContacts(),
       // Also load the other campaign's report so both tabs show data
-      db.getLatestImportReportForCampaign(activeTab === "personal" ? ENERGY_CAMPAIGN : PERSONAL_CAMPAIGN),
-      db.getCampaign(activeTab === "personal" ? ENERGY_CAMPAIGN : PERSONAL_CAMPAIGN).catch(() => null),
+      db.getLatestImportReportForCampaign(tab === "personal" ? ENERGY_CAMPAIGN : PERSONAL_CAMPAIGN),
+      db.getCampaign(tab === "personal" ? ENERGY_CAMPAIGN : PERSONAL_CAMPAIGN).catch(() => null),
     ])
       .then(([rep, cam, items, atts, allContacts, otherRep, otherCampaign]) => {
         // Store reports for both tabs
-        if (activeTab === "personal") {
+        if (tab === "personal") {
           if (rep) setPersonalReport(rep);
           if (otherRep) setEnergyReport(otherRep);
           else if (otherCampaign) setEnergyReport({ campaignId: ENERGY_CAMPAIGN, totalRows: 0, tierCounts: { inner_circle: 0, close: 0, warm: 0, cold: 0 }, callableCount: 0, phoneCount: 0, duplicatePhones: 0, duplicatePhoneGroups: [], quarantinedCount: 0, quarantinedReasons: {}, rejectedRows: 0, rejectionReasons: [], importedAt: otherCampaign.createdAt });
@@ -187,7 +196,7 @@ function Index() {
         ).length);
 
         // Queue counts — only for active campaign
-        const campaignItems = items.filter((qi) => qi.campaignId === campaignId);
+        const campaignItems = items.filter((qi) => qi.campaignId === cid);
         const counts: Record<string, number> = {};
         for (const item of campaignItems) {
           counts[item.queueStatus] = (counts[item.queueStatus] || 0) + 1;
@@ -226,12 +235,13 @@ function Index() {
         setAutoImporting(false);
         setContactLoading(false);
       });
+  }, []);
 
   // ── Refresh next contact after outcome ──
   const refreshNextContact = useCallback(() => {
     Promise.all([
       db.getAllQueueItems(),
-      db.getAttemptsByCampaign(campaignId),
+      db.getAttemptsByCampaign(campaignIdRef.current),
     ]).then(([items, atts]) => {
       setAttempts(atts);
       setAttemptsTotal(atts.length);
@@ -243,7 +253,7 @@ function Index() {
         a.commitmentStatus !== "not_discussed"
       ).length);
 
-      const campaignItems = items.filter((qi) => qi.campaignId === campaignId);
+      const campaignItems = items.filter((qi) => qi.campaignId === campaignIdRef.current);
       const counts: Record<string, number> = {};
       for (const item of campaignItems) counts[item.queueStatus] = (counts[item.queueStatus] || 0) + 1;
       setQueueCounts(counts);
@@ -264,14 +274,14 @@ function Index() {
           setNextQueueItem(first);
           setNextContact(c ?? null);
           setShowOutcomes(first.queueStatus === "initiated_unconfirmed" || first.queueStatus === "outcome_required");
-        });
+        }).catch((err) => console.error("Failed to load next contact:", err));
       } else {
         setNextQueueItem(null);
         setNextContact(null);
         setShowOutcomes(false);
       }
-    });
-  }, [campaignId]);
+    }).catch((err) => console.error("Failed to refresh next contact:", err));
+  }, []);
 
   // ── Initiate FaceTime Audio ──
   const startFaceTime = async () => {
@@ -500,6 +510,7 @@ function Index() {
       const result = await importEnergyCSV(csv);
       await persistEnergyImport(result);
       setEnergyReport(result.report);
+      await loadDashboard();
     } catch (err) {
       console.error("Energy import failed:", err);
       toast.error("Failed to import energy contacts");
@@ -674,7 +685,7 @@ function Index() {
                   ) : (
                     <span className="flex items-center justify-center rounded-lg border border-border bg-card px-2 py-2.5 text-xs text-muted-foreground/30">Email</span>
                   )}
-                  <button type="button" onClick={() => logOutcome("texted")}
+                  <button type="button" onClick={() => logOutcome("email_requested")}
                     className="w-full rounded-lg border border-sky-500/40 bg-sky-500/10 px-1.5 py-1.5 text-[10px] font-medium text-sky-400 transition-colors active:scale-95">
                     I emailed
                   </button>

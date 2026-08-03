@@ -7,6 +7,13 @@ import { db } from "@/lib/powerdialer-db";
 import type { V9Contact, QueueItem, V9Tier } from "@/lib/powerdialer-types";
 import { STATUS_COLORS, TIER_META } from "@/lib/powerdialer-constants";
 
+const PERSONAL_CAMPAIGN = "v9_relationship_calls";
+const ENERGY_CAMPAIGN = "v9_energy_calls";
+const CAMPAIGNS = [
+  { id: PERSONAL_CAMPAIGN, label: "Personal" },
+  { id: ENERGY_CAMPAIGN, label: "Energy" },
+] as const;
+
 export const Route = createFileRoute("/powerdialer/queue")({
   head: () => ({
     meta: [
@@ -24,14 +31,15 @@ function QueuePage() {
   const [filterTier, setFilterTier] = useState<"all" | V9Tier>("all");
   const [search, setSearch] = useState("");
   const [showClose, setShowClose] = useState(false);
+  const [campaignId, setCampaignId] = useState(PERSONAL_CAMPAIGN);
 
   useEffect(() => {
     Promise.all([db.getAllQueueItems(), db.getAllContacts()])
       .then(([items, con]) => {
-        // Filter to active V9 campaign items only
+        // Filter to active campaign items only
         const now = new Date().toISOString();
         const active = items.filter((qi) =>
-          qi.campaignId === "v9_relationship_calls" &&
+          qi.campaignId === campaignId &&
           qi.queueStatus !== "suppressed" &&
           qi.queueStatus !== "completed" &&
           qi.queueStatus !== "attempted" &&
@@ -41,7 +49,7 @@ function QueuePage() {
         setContacts(con);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [campaignId]);
 
   const contactMap = useMemo(
     () => new Map(contacts.map((c) => [c.id, c])),
@@ -90,6 +98,22 @@ function QueuePage() {
         </div>
         <h1 className="mt-1 font-serif text-2xl">Queue</h1>
         <p className="text-xs text-muted-foreground">{rows.length} active · Ordered by priority</p>
+        <div className="mt-2 flex gap-1.5">
+          {CAMPAIGNS.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => setCampaignId(c.id)}
+              className={`rounded-full border px-3 py-1 text-[10px] font-medium transition-colors ${
+                campaignId === c.id
+                  ? "border-primary bg-primary/20 text-primary"
+                  : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
       </header>
 
       <div className="mx-auto max-w-md px-5 py-4 space-y-3">
