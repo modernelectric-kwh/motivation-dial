@@ -18,7 +18,7 @@ import type {
 // Uses normalizePhone so the same contact gets the same ID even if
 // the raw phone format changes between CSV exports (e.g. "5551234567"
 // vs "+15551234567").
-function makeContactId(row: {
+export function makeContactId(row: {
   email: string;
   phone: string;
   full_name: string;
@@ -145,7 +145,7 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
 }
 
 // ── Phone normalization ──
-function normalizePhone(raw: string): string {
+export function normalizePhone(raw: string): string {
   if (!raw) return "";
   let p = raw.replace(/[^\d+]/g, "");
   if (!p.startsWith("+") && p.length === 10) p = "+1" + p;

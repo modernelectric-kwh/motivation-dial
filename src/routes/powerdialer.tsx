@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { db } from "@/lib/powerdialer-db";
 import type { ImportReport, Campaign } from "@/lib/powerdialer-types";
 import { TIER_ORDER, TIER_META } from "@/lib/powerdialer-constants";
+import { persistEnergyContacts } from "@/lib/energy-contacts-import";
 
 export const Route = createFileRoute("/powerdialer")({
   head: () => ({
@@ -27,18 +28,26 @@ function PowerdialerHome() {
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [queueCounts, setQueueCounts] = useState<Record<string, number>>({});
   const [attemptsTotal, setAttemptsTotal] = useState(0);
+  const [activeTab, setActiveTab] = useState<"personal" | "energy">("personal");
 
   useEffect(() => {
-    Promise.all([
-      db.getLatestImportReport(),
-      db.getCampaign("v9_relationship_calls"),
-      db.getAllQueueItems(),
-      db.getAllCallAttempts(),
-    ])
-      .then(([rep, cam, items, attempts]) => {
+    async function loadData() {
+      try {
+        // Initialize energy contacts on first load
+        await persistEnergyContacts(db);
+
+        // Load main powerdialer data
+        const [rep, cam, items, attempts] = await Promise.all([
+          db.getLatestImportReport(),
+          db.getCampaign("v9_relationship_calls"),
+          db.getAllQueueItems(),
+          db.getAllCallAttempts(),
+        ]);
+
         setReport(rep ?? null);
         setCampaign(cam ?? null);
         setAttemptsTotal(attempts.length);
+
         // Count queue items by status
         const counts: Record<string, number> = {};
         for (const item of items) {
@@ -46,9 +55,14 @@ function PowerdialerHome() {
         }
         // Tier counts from queue
         setQueueCounts(counts);
-      })
-      .catch((err) => console.error("Powerdialer load failed:", err))
-      .finally(() => setLoading(false));
+      } catch (err) {
+        console.error("Powerdialer load failed:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadData();
   }, []);
 
   if (!isIndex) return <Outlet />;
@@ -158,7 +172,7 @@ function PowerdialerHome() {
         <div className="mt-8 flex flex-col items-center">
           <button
             disabled={remaining === 0}
-            onClick={() => nav({ to: "/powerdialer/call" })}
+            onClick={() => nav({ to: "/powerdialer/call", search: { tab: activeTab } })}
             className="relative flex h-48 w-48 items-center justify-center rounded-full bg-gradient-to-br from-amber-500 to-emerald-600 text-white shadow-[0_20px_60px_-15px] shadow-amber-500/40 transition-transform active:scale-95 disabled:opacity-30"
           >
             <span className="font-serif text-4xl tracking-wide">CALL</span>
@@ -277,6 +291,37 @@ function PowerdialerHome() {
           {" · "}
           {report.totalRows.toLocaleString()} rows processed
         </p>
+
+        {/* Tab switcher */}
+        <div className="mt-8 flex gap-2 rounded-2xl border border-border bg-card p-1">
+          <button
+            onClick={() => setActiveTab("personal")}
+            className={`flex-1 rounded-xl py-2 text-sm font-medium transition-colors ${
+              activeTab === "personal"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Personal Contacts
+          </button>
+          <button
+            onClick={() => setActiveTab("energy")}
+            className={`flex-1 rounded-xl py-2 text-sm font-medium transition-colors ${
+              activeTab === "energy"
+                ? "bg-accent text-accent-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Energy Contacts
+          </button>
+        </div>
+
+        {activeTab === "energy" && (
+          <div className="mt-4 text-center text-xs text-muted-foreground">
+            <p className="font-medium text-foreground">Energy Sector Outreach</p>
+            <p className="mt-1">156 Granola-verified contacts · Next week power dial</p>
+          </div>
+        )}
       </div>
     </div>
   );

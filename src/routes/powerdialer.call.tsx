@@ -3,7 +3,7 @@
 // FaceTime Audio + Phone launch. Manual outcome logging only.
 // No autonomous dialing. Each launch = initiated_unconfirmed.
 
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useSearch } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
 import { db } from "@/lib/powerdialer-db";
 import type {
@@ -19,6 +19,9 @@ import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/powerdialer/call")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    tab: (search.tab as string) ?? "personal",
+  }),
   head: () => ({
     meta: [
       { title: "Powerdialer · Call" },
@@ -64,6 +67,7 @@ function getLatestUnresolvedAttempt(attempts: CallAttempt[], contactId: string):
 }
 
 function PowerdialerCall() {
+  const { tab } = useSearch({ from: "/powerdialer/call" });
   const [loading, setLoading] = useState(true);
   const [contacts, setContacts] = useState<V9Contact[]>([]);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
@@ -82,6 +86,8 @@ function PowerdialerCall() {
 
   // Load data
   useEffect(() => {
+    const campaignId = tab === "energy" ? "energy_contacts" : "v9_relationship_calls";
+
     Promise.all([
       db.getAllContacts(),
       db.getAllQueueItems(),
@@ -89,31 +95,31 @@ function PowerdialerCall() {
     ]).then(([allContacts, allItems, atts]) => {
       setAttempts(atts);
 
-      // Filter to active queue items for the V9 relationship campaign
-      const v9Items = allItems.filter(
+      // Filter to active queue items for the selected campaign
+      const filteredItems = allItems.filter(
         (qi) =>
-          qi.campaignId === "v9_relationship_calls" &&
+          qi.campaignId === campaignId &&
           qi.queueStatus !== "suppressed" &&
           qi.queueStatus !== "completed" &&
           qi.queueStatus !== "attempted",
       );
 
       // Sort by priority (ascending)
-      v9Items.sort((a, b) => a.priority - b.priority);
+      filteredItems.sort((a, b) => a.priority - b.priority);
 
       // Build contact map
       const contactMap = new Map(allContacts.map((c) => [c.id, c]));
-      const orderedContacts = v9Items
+      const orderedContacts = filteredItems
         .map((qi) => contactMap.get(qi.contactId))
         .filter(Boolean) as V9Contact[];
 
-      setQueueItems(v9Items);
+      setQueueItems(filteredItems);
       setContacts(orderedContacts);
       setLoading(false);
     }).catch(() => {
       setLoading(false);
     });
-  }, []);
+  }, [tab]);
 
   const contact = contacts[currentIdx];
   const queueItem = queueItems[currentIdx];
